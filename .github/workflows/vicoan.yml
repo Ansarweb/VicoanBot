@@ -25,18 +25,23 @@ jobs:
             make \
             gperf \
             libssl-dev \
-            zlib1g-dev
+            zlib1g-dev \
+            curl
 
       - name: Build Telegram Local Bot API
         run: |
           git clone --recursive https://github.com/tdlib/telegram-bot-api.git
+
           cd telegram-bot-api
+
           mkdir build
           cd build
+
           cmake -DCMAKE_BUILD_TYPE=Release ..
+
           cmake --build . --target telegram-bot-api -j2
 
-      - name: Install Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -45,11 +50,25 @@ jobs:
         run: |
           pip install -r requirements.txt
 
+      - name: Log out bot from Telegram cloud API
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+        run: |
+          echo "Logging out bot from Telegram cloud API..."
+
+          RESPONSE=$(curl -s \
+            -X POST \
+            "https://api.telegram.org/bot${BOT_TOKEN}/logOut")
+
+          echo "$RESPONSE"
+
       - name: Start Local Bot API
         env:
           TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
           TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
         run: |
+          echo "Starting Local Bot API..."
+
           ./telegram-bot-api/build/telegram-bot-api \
             --api-id="$TELEGRAM_API_ID" \
             --api-hash="$TELEGRAM_API_HASH" \
@@ -59,7 +78,12 @@ jobs:
 
           sleep 10
 
-          curl -s http://127.0.0.1:8081/
+          echo "Testing Local Bot API..."
+
+          curl -s \
+            "http://127.0.0.1:8081/bot${{ secrets.BOT_TOKEN }}/getMe"
+
+          echo
 
       - name: Run VicoanBot
         env:
@@ -67,4 +91,6 @@ jobs:
           TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
           TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
         run: |
+          echo "Starting VicoanBot..."
+
           python bot.py
