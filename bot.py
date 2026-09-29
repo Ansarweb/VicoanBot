@@ -24,6 +24,9 @@ if not BOT_TOKEN:
 
 MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024
 
+LOCAL_API = "http://127.0.0.1:8081/bot"
+LOCAL_FILE_API = "http://127.0.0.1:8081/file/bot"
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -34,16 +37,38 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+def quality_keyboard():
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "🔹 کم‌حجم — 480p",
+                    callback_data="quality_480",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔹 متعادل — 720p",
+                    callback_data="quality_720",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔹 کیفیت بالا — 1080p",
+                    callback_data="quality_1080",
+                )
+            ],
+        ]
+    )
+
+
 async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
 
-    if not message:
+    if not message or not message.video:
         return
 
     video = message.video
-
-    if not video:
-        return
 
     if video.file_size and video.file_size > MAX_FILE_SIZE:
         await message.reply_text(
@@ -53,30 +78,10 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data["video_file_id"] = video.file_id
 
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                "🔹 کم‌حجم — 480p",
-                callback_data="quality_480",
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🔹 متعادل — 720p",
-                callback_data="quality_720",
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🔹 کیفیت بالا — 1080p",
-                callback_data="quality_1080",
-            )
-        ],
-    ]
-
     await message.reply_text(
+        "ویدئو دریافت شد.\n\n"
         "کیفیت خروجی را انتخاب کن:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
+        reply_markup=quality_keyboard(),
     )
 
 
@@ -87,13 +92,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     document = message.document
-
-    if document.file_size and document.file_size > MAX_FILE_SIZE:
-        await message.reply_text(
-            "❌ حجم فایل بیشتر از ۲ گیگابایت است."
-        )
-        return
-
     mime_type = document.mime_type or ""
 
     if not mime_type.startswith("video/"):
@@ -102,33 +100,18 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    if document.file_size and document.file_size > MAX_FILE_SIZE:
+        await message.reply_text(
+            "❌ حجم فایل بیشتر از ۲ گیگابایت است."
+        )
+        return
+
     context.user_data["video_file_id"] = document.file_id
 
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                "🔹 کم‌حجم — 480p",
-                callback_data="quality_480",
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🔹 متعادل — 720p",
-                callback_data="quality_720",
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🔹 کیفیت بالا — 1080p",
-                callback_data="quality_1080",
-            )
-        ],
-    ]
-
     await message.reply_text(
-        "ویدئو دریافت شد.\n"
+        "ویدئو دریافت شد.\n\n"
         "کیفیت خروجی را انتخاب کن:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
+        reply_markup=quality_keyboard(),
     )
 
 
@@ -200,13 +183,11 @@ async def handle_quality(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
 
-    # Local Telegram Bot API Server
-    local_api_url = "http://127.0.0.1:8081/bot"
-
     application = (
         Application.builder()
         .token(BOT_TOKEN)
-        .base_url(local_api_url)
+        .base_url(LOCAL_API)
+        .base_file_url(LOCAL_FILE_API)
         .build()
     )
 
