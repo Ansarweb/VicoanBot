@@ -2,9 +2,10 @@ name: VicoanBot
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
+
+concurrency:
+  group: vicoan-bot
+  cancel-in-progress: true
 
 jobs:
   run-bot:
@@ -31,14 +32,10 @@ jobs:
       - name: Build Telegram Local Bot API
         run: |
           git clone --recursive https://github.com/tdlib/telegram-bot-api.git
-
           cd telegram-bot-api
-
           mkdir build
           cd build
-
           cmake -DCMAKE_BUILD_TYPE=Release ..
-
           cmake --build . --target telegram-bot-api -j2
 
       - name: Setup Python
@@ -55,12 +52,10 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
         run: |
           echo "Logging out bot from Telegram cloud API..."
-
-          RESPONSE=$(curl -s \
+          curl -s \
             -X POST \
-            "https://api.telegram.org/bot${BOT_TOKEN}/logOut")
-
-          echo "$RESPONSE"
+            "https://api.telegram.org/bot${BOT_TOKEN}/logOut" || true
+          echo
 
       - name: Start Local Bot API
         env:
@@ -92,5 +87,4 @@ jobs:
           TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
         run: |
           echo "Starting VicoanBot..."
-
           python bot.py
