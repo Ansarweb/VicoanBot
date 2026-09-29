@@ -47,16 +47,6 @@ jobs:
         run: |
           pip install -r requirements.txt
 
-      - name: Log out bot from Telegram cloud API
-        env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-        run: |
-          echo "Logging out bot from Telegram cloud API..."
-          curl -s \
-            -X POST \
-            "https://api.telegram.org/bot${BOT_TOKEN}/logOut" || true
-          echo
-
       - name: Start Local Bot API
         env:
           TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
@@ -71,12 +61,20 @@ jobs:
             --http-port=8081 \
             > telegram-api.log 2>&1 &
 
-          sleep 10
+          sleep 15
 
           echo "Testing Local Bot API..."
 
-          curl -s \
+          curl --fail-with-body \
             "http://127.0.0.1:8081/bot${{ secrets.BOT_TOKEN }}/getMe"
+
+          echo
+
+          echo "Removing any webhook..."
+
+          curl --fail-with-body \
+            -X POST \
+            "http://127.0.0.1:8081/bot${{ secrets.BOT_TOKEN }}/deleteWebhook"
 
           echo
 
@@ -86,5 +84,5 @@ jobs:
           TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
           TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
         run: |
-          echo "Starting VicoanBot..."
+          echo "Starting VicoanBot on Local Bot API..."
           python bot.py
