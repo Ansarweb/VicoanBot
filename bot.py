@@ -28,9 +28,9 @@ MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "سلام 👋\n\n"
-        "من ربات فشرده‌سازی ویدئو هستم.\n"
-        "یک ویدئو برای من بفرست یا Forward کن.\n\n"
-        "بعد از دریافت ویدئو، کیفیت موردنظر را انتخاب کن."
+        "من ربات فشرده‌سازی ویدئو هستم.\n\n"
+        "یک ویدئو برای من بفرست یا Forward کن.\n"
+        "بعد کیفیت خروجی را انتخاب کن."
     )
 
 
@@ -43,12 +43,11 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     video = message.video
 
     if not video:
-        await message.reply_text("لطفاً یک فایل ویدئویی ارسال کن.")
         return
 
     if video.file_size and video.file_size > MAX_FILE_SIZE:
         await message.reply_text(
-            "حجم این فایل بیشتر از ۲ گیگابایت است."
+            "❌ حجم فایل بیشتر از ۲ گیگابایت است."
         )
         return
 
@@ -81,6 +80,58 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.message
+
+    if not message or not message.document:
+        return
+
+    document = message.document
+
+    if document.file_size and document.file_size > MAX_FILE_SIZE:
+        await message.reply_text(
+            "❌ حجم فایل بیشتر از ۲ گیگابایت است."
+        )
+        return
+
+    mime_type = document.mime_type or ""
+
+    if not mime_type.startswith("video/"):
+        await message.reply_text(
+            "❌ این فایل ویدئویی نیست."
+        )
+        return
+
+    context.user_data["video_file_id"] = document.file_id
+
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "🔹 کم‌حجم — 480p",
+                callback_data="quality_480",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🔹 متعادل — 720p",
+                callback_data="quality_720",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🔹 کیفیت بالا — 1080p",
+                callback_data="quality_1080",
+            )
+        ],
+    ]
+
+    await message.reply_text(
+        "ویدئو دریافت شد.\n"
+        "کیفیت خروجی را انتخاب کن:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
 async def handle_quality(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
 
@@ -90,18 +141,21 @@ async def handle_quality(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not file_id:
         await query.message.reply_text(
-            "فایل ویدئویی پیدا نشد. دوباره ویدئو را ارسال کن."
+            "❌ فایل ویدئویی پیدا نشد.\n"
+            "لطفاً دوباره ویدئو را ارسال کن."
         )
         return
 
     quality = query.data.replace("quality_", "")
 
     await query.edit_message_text(
-        f"⏳ در حال آماده‌سازی نسخه {quality}p...\n"
-        "ممکن است برای فایل‌های بزرگ مدتی طول بکشد."
+        f"⏳ در حال فشرده‌سازی نسخه {quality}p...\n\n"
+        "برای فایل‌های بزرگ ممکن است مدتی طول بکشد."
     )
 
-    work_dir = Path(tempfile.mkdtemp(prefix="vicoan_"))
+    work_dir = Path(
+        tempfile.mkdtemp(prefix="vicoan_")
+    )
 
     input_file = work_dir / "input.mp4"
     output_file = work_dir / f"vicoan_{quality}p.mp4"
@@ -120,13 +174,16 @@ async def handle_quality(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         if not output_file.exists():
-            raise RuntimeError("Output file was not created")
+            raise RuntimeError(
+                "فایل خروجی ساخته نشد."
+            )
 
-        await query.message.reply_video(
-            video=output_file.open("rb"),
-            caption=f"✅ نسخه {quality}p آماده شد.",
-            supports_streaming=True,
-        )
+        with output_file.open("rb") as video_file:
+            await query.message.reply_video(
+                video=video_file,
+                caption=f"✅ نسخه {quality}p آماده شد.",
+                supports_streaming=True,
+            )
 
     except Exception as error:
         await query.message.reply_text(
@@ -135,18 +192,23 @@ async def handle_quality(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     finally:
-        shutil.rmtree(work_dir, ignore_errors=True)
-
-
-async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "این فایل به‌صورت Document ارسال شده است.\n"
-        "فعلاً لطفاً ویدئو را با گزینه Video ارسال کن."
-    )
+        shutil.rmtree(
+            work_dir,
+            ignore_errors=True
+        )
 
 
 def main():
-    application = Application.builder().token(BOT_TOKEN).build()
+
+    # Local Telegram Bot API Server
+    local_api_url = "http://127.0.0.1:8081/bot"
+
+    application = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .base_url(local_api_url)
+        .build()
+    )
 
     application.add_handler(
         CommandHandler("start", start)
@@ -173,7 +235,7 @@ def main():
         )
     )
 
-    print("VicoanBot is running...")
+    print("VicoanBot is running on Local Bot API...")
 
     application.run_polling()
 
