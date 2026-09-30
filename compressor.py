@@ -2,21 +2,22 @@ import asyncio
 import shutil
 from pathlib import Path
 
+
 PRESETS = {
     "480": {
         "height": 480,
-        "crf": 28,
-        "audio_bitrate": "96k",
+        "crf": 32,
+        "audio_bitrate": "64k",
     },
     "720": {
         "height": 720,
-        "crf": 27,
-        "audio_bitrate": "128k",
+        "crf": 31,
+        "audio_bitrate": "64k",
     },
     "1080": {
         "height": 1080,
-        "crf": 27,
-        "audio_bitrate": "128k",
+        "crf": 30,
+        "audio_bitrate": "64k",
     },
 }
 
@@ -28,7 +29,9 @@ async def compress_video(
 ) -> None:
 
     if quality not in PRESETS:
-        raise ValueError("Invalid quality")
+        raise ValueError(
+            f"Invalid quality: {quality}"
+        )
 
     preset = PRESETS[quality]
 
@@ -36,7 +39,13 @@ async def compress_video(
     output_path = Path(output_file)
 
     if not input_path.exists():
-        raise FileNotFoundError(input_file)
+        raise FileNotFoundError(
+            f"Input file not found: {input_file}"
+        )
+
+    # --------------------------------------------------------
+    # FFmpeg
+    # --------------------------------------------------------
 
     command = [
         "ffmpeg",
@@ -45,6 +54,7 @@ async def compress_video(
         "-i",
         str(input_path),
 
+        # کاهش رزولوشن در صورت نیاز
         "-vf",
         (
             f"scale="
@@ -54,20 +64,30 @@ async def compress_video(
             f"pad=ceil(iw/2)*2:ceil(ih/2)*2"
         ),
 
+        # H.264
         "-c:v",
         "libx264",
 
+        # فشرده‌سازی شدید
         "-preset",
-        "medium",
+        "slow",
 
         "-crf",
         str(preset["crf"]),
 
+        # صدای کم‌حجم
         "-c:a",
         "aac",
 
         "-b:a",
         preset["audio_bitrate"],
+
+        "-ac",
+        "2",
+
+        # سازگاری بهتر با Telegram
+        "-pix_fmt",
+        "yuv420p",
 
         "-movflags",
         "+faststart",
@@ -84,27 +104,41 @@ async def compress_video(
     stdout, stderr = await process.communicate()
 
     if process.returncode != 0:
+
         error = stderr.decode(
             "utf-8",
             errors="replace"
         )
 
         raise RuntimeError(
-            f"FFmpeg failed:\n{error[-4000:]}"
+            "FFmpeg compression failed:\n"
+            + error[-5000:]
         )
 
-    # اگر فایل فشرده‌شده بزرگ‌تر از فایل اصلی شد،
-    # فایل اصلی را جایگزین خروجی می‌کنیم.
-    if output_path.exists():
+    if not output_path.exists():
 
-        original_size = input_path.stat().st_size
-        compressed_size = output_path.stat().st_size
+        raise RuntimeError(
+            "FFmpeg did not create output file."
+        )
 
-        if compressed_size >= original_size:
+    if output_path.stat().st_size == 0:
 
-            output_path.unlink()
+        raise RuntimeError(
+            "FFmpeg created an empty output file."
+        )
 
-            shutil.copy2(
-                input_path,
-                output_path
-            )
+    # --------------------------------------------------------
+    # جلوگیری از بزرگ‌تر شدن فایل
+    # --------------------------------------------------------
+
+    original_size = input_path.stat().st_size
+    compressed_size = output_path.stat().st_size
+
+    if compressed_size >= original_size:
+
+        output_path.unlink()
+
+        shutil.copy2(
+            input_path,
+            output_path
+        )
