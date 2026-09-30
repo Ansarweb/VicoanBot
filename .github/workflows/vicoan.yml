@@ -15,22 +15,33 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install system packages
+      - name: Install required system packages
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             ffmpeg \
+            curl \
             git \
             cmake \
             g++ \
             make \
             gperf \
             libssl-dev \
-            zlib1g-dev \
-            curl
+            zlib1g-dev
+
+      - name: Restore Telegram Local Bot API cache
+        id: botapi-cache
+        uses: actions/cache@v4
+        with:
+          path: telegram-bot-api/build/telegram-bot-api
+          key: vicoan-telegram-bot-api-v1-${{ runner.os }}-x64
 
       - name: Build Telegram Local Bot API
+        if: steps.botapi-cache.outputs.cache-hit != 'true'
         run: |
+          echo "Cache not found."
+          echo "Building Telegram Local Bot API..."
+
           git clone --recursive https://github.com/tdlib/telegram-bot-api.git
 
           cd telegram-bot-api
@@ -42,10 +53,24 @@ jobs:
 
           cmake --build . --target telegram-bot-api -j2
 
+          echo "Telegram Local Bot API build completed."
+
+      - name: Show cache status
+        run: |
+          if [ "${{ steps.botapi-cache.outputs.cache-hit }}" = "true" ]; then
+            echo "✅ Telegram Local Bot API restored from cache."
+          else
+            echo "🆕 Telegram Local Bot API was built and will be cached."
+          fi
+
+          ls -lh telegram-bot-api/build/telegram-bot-api
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
 
       - name: Install Python dependencies
         run: |
@@ -123,7 +148,6 @@ jobs:
           TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
         run: |
           echo "Starting VicoanBot on Local Bot API..."
-
           python -u bot.py
 
       - name: Show Local Bot API log
