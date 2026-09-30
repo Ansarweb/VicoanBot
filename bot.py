@@ -12,6 +12,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+from telegram.request import HTTPXRequest
 
 from compressor import compress_video
 
@@ -28,7 +29,22 @@ LOCAL_API = "http://127.0.0.1:8081/bot"
 LOCAL_FILE_API = "http://127.0.0.1:8081/file/bot"
 
 
+# ============================================================
+# Telegram connection settings
+# مناسب برای فایل‌های حجیم و اینترنت کند
+# ============================================================
+
+TELEGRAM_REQUEST = HTTPXRequest(
+    connection_pool_size=20,
+    connect_timeout=60.0,
+    read_timeout=1800.0,
+    write_timeout=1800.0,
+    pool_timeout=60.0,
+)
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     await update.message.reply_text(
         "سلام 👋\n\n"
         "من ربات فشرده‌سازی ویدئو هستم.\n\n"
@@ -38,6 +54,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def quality_keyboard():
+
     return InlineKeyboardMarkup(
         [
             [
@@ -62,7 +79,11 @@ def quality_keyboard():
     )
 
 
-async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_video(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+
     message = update.message
 
     if not message or not message.video:
@@ -71,9 +92,11 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     video = message.video
 
     if video.file_size and video.file_size > MAX_FILE_SIZE:
+
         await message.reply_text(
             "❌ حجم فایل بیشتر از ۲ گیگابایت است."
         )
+
         return
 
     context.user_data["video_file_id"] = video.file_id
@@ -85,25 +108,34 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_document(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+
     message = update.message
 
     if not message or not message.document:
         return
 
     document = message.document
+
     mime_type = document.mime_type or ""
 
     if not mime_type.startswith("video/"):
+
         await message.reply_text(
             "❌ این فایل ویدئویی نیست."
         )
+
         return
 
     if document.file_size and document.file_size > MAX_FILE_SIZE:
+
         await message.reply_text(
             "❌ حجم فایل بیشتر از ۲ گیگابایت است."
         )
+
         return
 
     context.user_data["video_file_id"] = document.file_id
@@ -115,7 +147,11 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def handle_quality(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_quality(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+
     query = update.callback_query
 
     await query.answer()
@@ -123,13 +159,18 @@ async def handle_quality(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file_id = context.user_data.get("video_file_id")
 
     if not file_id:
+
         await query.message.reply_text(
             "❌ فایل ویدئویی پیدا نشد.\n"
             "لطفاً دوباره ویدئو را ارسال کن."
         )
+
         return
 
-    quality = query.data.replace("quality_", "")
+    quality = query.data.replace(
+        "quality_",
+        "",
+    )
 
     await query.edit_message_text(
         f"⏳ در حال فشرده‌سازی نسخه {quality}p...\n\n"
@@ -137,17 +178,49 @@ async def handle_quality(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     work_dir = Path(
-        tempfile.mkdtemp(prefix="vicoan_")
+        tempfile.mkdtemp(
+            prefix="vicoan_"
+        )
     )
 
     input_file = work_dir / "input.mp4"
-    output_file = work_dir / f"vicoan_{quality}p.mp4"
+
+    output_file = (
+        work_dir
+        / f"vicoan_{quality}p.mp4"
+    )
 
     try:
-        telegram_file = await context.bot.get_file(file_id)
+
+        # ====================================================
+        # Download
+        # ====================================================
+
+        await query.message.reply_text(
+            "⬇️ در حال دریافت فایل..."
+        )
+
+        telegram_file = await context.bot.get_file(
+            file_id
+        )
 
         await telegram_file.download_to_drive(
             custom_path=str(input_file)
+        )
+
+        if not input_file.exists():
+
+            raise RuntimeError(
+                "فایل ورودی دانلود نشد."
+            )
+
+        # ====================================================
+        # Compression
+        # ====================================================
+
+        await query.message.reply_text(
+            "⚙️ فایل دریافت شد.\n"
+            "در حال فشرده‌سازی..."
         )
 
         await compress_video(
@@ -157,27 +230,60 @@ async def handle_quality(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         if not output_file.exists():
+
             raise RuntimeError(
                 "فایل خروجی ساخته نشد."
             )
 
+        if output_file.stat().st_size == 0:
+
+            raise RuntimeError(
+                "فایل خروجی خالی است."
+            )
+
+        # ====================================================
+        # Upload
+        # ====================================================
+
+        await query.message.reply_text(
+            "⬆️ فشرده‌سازی تمام شد.\n"
+            "در حال ارسال فایل..."
+        )
+
         with output_file.open("rb") as video_file:
+
             await query.message.reply_video(
                 video=video_file,
-                caption=f"✅ نسخه {quality}p آماده شد.",
+                caption=(
+                    f"✅ نسخه {quality}p آماده شد."
+                ),
                 supports_streaming=True,
+                read_timeout=1800,
+                write_timeout=1800,
+                connect_timeout=60,
+                pool_timeout=60,
             )
 
     except Exception as error:
+
+        error_text = str(error)
+
+        if not error_text:
+            error_text = repr(error)
+
         await query.message.reply_text(
-            "❌ هنگام فشرده‌سازی خطایی رخ داد.\n\n"
-            f"{str(error)[:1500]}"
+            "❌ هنگام پردازش فایل خطایی رخ داد.\n\n"
+            f"نوع خطا:\n"
+            f"{type(error).__name__}\n\n"
+            f"جزئیات:\n"
+            f"{error_text[:3000]}"
         )
 
     finally:
+
         shutil.rmtree(
             work_dir,
-            ignore_errors=True
+            ignore_errors=True,
         )
 
 
@@ -186,13 +292,22 @@ def main():
     application = (
         Application.builder()
         .token(BOT_TOKEN)
+
+        # Local Telegram Bot API
         .base_url(LOCAL_API)
         .base_file_url(LOCAL_FILE_API)
+
+        # Timeoutهای طولانی برای فایل‌های حجیم
+        .request(TELEGRAM_REQUEST)
+
         .build()
     )
 
     application.add_handler(
-        CommandHandler("start", start)
+        CommandHandler(
+            "start",
+            start,
+        )
     )
 
     application.add_handler(
@@ -216,7 +331,10 @@ def main():
         )
     )
 
-    print("VicoanBot is running on Local Bot API...")
+    print(
+        "VicoanBot is running on Local Bot API...",
+        flush=True,
+    )
 
     application.run_polling()
 
