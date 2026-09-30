@@ -8,10 +8,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  run-bot:
+
+  # =========================================================
+  # JOB 1: Build Telegram Local Bot API + Cache
+  # =========================================================
+  prepare:
+    name: Prepare Telegram Local Bot API
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -45,12 +51,10 @@ jobs:
           git clone --recursive https://github.com/tdlib/telegram-bot-api.git
 
           cd telegram-bot-api
-
           mkdir build
           cd build
 
           cmake -DCMAKE_BUILD_TYPE=Release ..
-
           cmake --build . --target telegram-bot-api -j2
 
           echo "Telegram Local Bot API build completed."
@@ -58,12 +62,61 @@ jobs:
       - name: Show cache status
         run: |
           if [ "${{ steps.botapi-cache.outputs.cache-hit }}" = "true" ]; then
-            echo "✅ Telegram Local Bot API restored from cache."
+            echo "========================================"
+            echo "CACHE HIT"
+            echo "Telegram Local Bot API restored."
+            echo "========================================"
           else
-            echo "🆕 Telegram Local Bot API was built and will be cached."
+            echo "========================================"
+            echo "CACHE MISS"
+            echo "Telegram Local Bot API was built."
+            echo "It will now be saved to cache."
+            echo "========================================"
           fi
 
           ls -lh telegram-bot-api/build/telegram-bot-api
+
+
+  # =========================================================
+  # JOB 2: Run VicoanBot
+  # =========================================================
+  run-bot:
+    name: Run VicoanBot
+    needs: prepare
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install required system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ffmpeg \
+            curl
+
+      - name: Restore Telegram Local Bot API cache
+        id: botapi-cache
+        uses: actions/cache@v4
+        with:
+          path: telegram-bot-api/build/telegram-bot-api
+          key: vicoan-telegram-bot-api-v1-${{ runner.os }}-x64
+
+      - name: Show restored Bot API
+        run: |
+          echo "========================================"
+          echo "Telegram Local Bot API"
+          echo "========================================"
+
+          if [ -f telegram-bot-api/build/telegram-bot-api ]; then
+            echo "Bot API executable found."
+            ls -lh telegram-bot-api/build/telegram-bot-api
+          else
+            echo "ERROR: Bot API executable not found."
+            exit 1
+          fi
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -95,10 +148,10 @@ jobs:
           API_PID=$!
 
           echo "Local Bot API PID: $API_PID"
-
           echo "Waiting for Local Bot API..."
 
           for i in {1..30}; do
+
             if curl -s \
               "http://127.0.0.1:8081/bot${BOT_TOKEN}/getMe" \
               > /tmp/getme.json; then
@@ -109,7 +162,7 @@ jobs:
             fi
 
             if ! kill -0 "$API_PID" 2>/dev/null; then
-              echo "Local Bot API process stopped unexpectedly."
+              echo "Local Bot API stopped unexpectedly."
               echo "===== telegram-api.log ====="
               cat telegram-api.log
               exit 1
@@ -117,6 +170,7 @@ jobs:
 
             echo "Waiting... ($i/30)"
             sleep 2
+
           done
 
           if ! curl -sf \
@@ -124,10 +178,8 @@ jobs:
             > /tmp/getme.json; then
 
             echo "Local Bot API did not become ready."
-
             echo "===== telegram-api.log ====="
             cat telegram-api.log
-
             exit 1
           fi
 
@@ -147,7 +199,10 @@ jobs:
           TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
           TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
         run: |
-          echo "Starting VicoanBot on Local Bot API..."
+          echo "========================================"
+          echo "VicoanBot is starting..."
+          echo "========================================"
+
           python -u bot.py
 
       - name: Show Local Bot API log
