@@ -1,6 +1,8 @@
 import os
+import re
 import shutil
 import tempfile
+import asyncio
 from pathlib import Path
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -31,7 +33,7 @@ LOCAL_FILE_API = "http://127.0.0.1:8081/file/bot"
 
 # ============================================================
 # Telegram connection settings
-# مناسب برای فایل‌های حجیم و اینترنت کند
+# مناسب برای فایل‌های حجیم
 # ============================================================
 
 TELEGRAM_REQUEST = HTTPXRequest(
@@ -43,15 +45,57 @@ TELEGRAM_REQUEST = HTTPXRequest(
 )
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ============================================================
+# Instagram URL detection
+# ============================================================
+
+INSTAGRAM_URL_PATTERN = re.compile(
+    r"https?://(?:www\.)?instagram\.com/"
+    r"(?:reel|reels|p|tv)/[^\s]+",
+    re.IGNORECASE,
+)
+
+
+def extract_instagram_url(text: str):
+    if not text:
+        return None
+
+    match = INSTAGRAM_URL_PATTERN.search(text)
+
+    if not match:
+        return None
+
+    url = match.group(0)
+
+    # حذف علائم احتمالی انتهای لینک
+    url = url.rstrip(".,!?;:)]}")
+
+    return url
+
+
+# ============================================================
+# Start
+# ============================================================
+
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
 
     await update.message.reply_text(
         "سلام 👋\n\n"
         "من ربات فشرده‌سازی ویدئو هستم.\n\n"
-        "یک ویدئو برای من بفرست یا Forward کن.\n"
-        "بعد کیفیت خروجی را انتخاب کن."
+        "🎬 ویدئوی تلگرامی بفرست:\n"
+        "می‌توانی کیفیت 480p، 720p یا 1080p را انتخاب کنی.\n\n"
+        "📥 یا لینک Instagram بفرست:\n"
+        "ربات خودش ویدئو را دانلود می‌کند، "
+        "به 480p تبدیل می‌کند و نسخه کم‌حجم را تحویل می‌دهد."
     )
 
+
+# ============================================================
+# Quality buttons
+# ============================================================
 
 def quality_keyboard():
 
@@ -78,6 +122,10 @@ def quality_keyboard():
         ]
     )
 
+
+# ============================================================
+# Direct Telegram video
+# ============================================================
 
 async def handle_video(
     update: Update,
@@ -107,6 +155,10 @@ async def handle_video(
         reply_markup=quality_keyboard(),
     )
 
+
+# ============================================================
+# Direct Telegram document video
+# ============================================================
 
 async def handle_document(
     update: Update,
@@ -147,6 +199,277 @@ async def handle_document(
     )
 
 
+# ============================================================
+# Download Instagram video
+# ============================================================
+
+async def download_instagram_video(
+    url: str,
+    output_dir: Path,
+) -> Path:
+
+    output_template = output_dir / "instagram_video.%(ext)s"
+
+    command = [
+        "yt-dlp",
+
+        "--no-playlist",
+
+        "--format",
+        "bestvideo+bestaudio/best",
+
+        "--merge-output-format",
+        "mp4",
+
+        "--no-warnings",
+
+        "--restrict-filenames",
+
+        "-o",
+        str(output_template),
+
+        url,
+    ]
+
+    process = await asyncio.create_subprocess_exec(
+        *command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    stdout, stderr = await process.communicate()
+
+    stdout_text = stdout.decode(
+        "utf-8",
+        errors="replace",
+    )
+
+    stderr_text = stderr.decode(
+        "utf-8",
+        errors="replace",
+    )
+
+    if process.returncode != 0:
+
+        error_text = stderr_text[-5000:]
+
+        if not error_text:
+            error_text = stdout_text[-5000:]
+
+        raise RuntimeError(
+            "Instagram download failed:\n"
+            + error_text
+        )
+
+    # پیدا کردن فایل دانلودشده
+    video_files = []
+
+    for file in output_dir.iterdir():
+
+        if file.is_file() and file.suffix.lower() in (
+            ".mp4",
+            ".mkv",
+            ".webm",
+            ".mov",
+            ".avi",
+        ):
+            video_files.append(file)
+
+    if not video_files:
+
+        raise RuntimeError(
+            "Instagram video was downloaded, "
+            "but the video file could not be found."
+        )
+
+    # معمولاً فقط یک فایل وجود دارد
+    video_file = max(
+        video_files,
+        key=lambda item: item.stat().st_mtime,
+    )
+
+    return video_file
+
+
+# ============================================================
+# Instagram link handler
+# ============================================================
+
+async def handle_instagram_link(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+
+    message = update.message
+
+    if not message or not message.text:
+        return
+
+    url = extract_instagram_url(
+        message.text
+    )
+
+    if not url:
+        return
+
+    work_dir = Path(
+        tempfile.mkdtemp(
+            prefix="vicoan_instagram_"
+        )
+    )
+
+    downloaded_file = None
+
+    output_file = (
+        work_dir
+        / "instagram_480p.mp4"
+    )
+
+    status_message = None
+
+    try:
+
+        # ====================================================
+        # Download
+        # ====================================================
+
+        status_message = await message.reply_text(
+            "📥 لینک Instagram دریافت شد.\n\n"
+            "در حال دانلود ویدئو..."
+        )
+
+        downloaded_file = await download_instagram_video(
+            url=url,
+            output_dir=work_dir,
+        )
+
+        if not downloaded_file.exists():
+
+            raise RuntimeError(
+                "فایل Instagram دریافت نشد."
+            )
+
+        downloaded_size = (
+            downloaded_file.stat().st_size
+        )
+
+        if downloaded_size > MAX_FILE_SIZE:
+
+            raise RuntimeError(
+                "حجم ویدئوی دانلودشده بیشتر از "
+                "۲ گیگابایت است."
+            )
+
+        # ====================================================
+        # Compression
+        # ====================================================
+
+        await status_message.edit_text(
+            "⚙️ ویدئو دانلود شد.\n\n"
+            "در حال تبدیل به 480p و "
+            "کاهش حجم..."
+        )
+
+        await compress_video(
+            input_file=str(downloaded_file),
+            output_file=str(output_file),
+            quality="480",
+        )
+
+        if not output_file.exists():
+
+            raise RuntimeError(
+                "فایل 480p ساخته نشد."
+            )
+
+        if output_file.stat().st_size == 0:
+
+            raise RuntimeError(
+                "فایل خروجی خالی است."
+            )
+
+        # ====================================================
+        # Upload
+        # ====================================================
+
+        await status_message.edit_text(
+            "⬆️ فشرده‌سازی تمام شد.\n\n"
+            "در حال ارسال نسخه کم‌حجم..."
+        )
+
+        compressed_size = (
+            output_file.stat().st_size
+        )
+
+        original_mb = (
+            downloaded_size / 1024 / 1024
+        )
+
+        compressed_mb = (
+            compressed_size / 1024 / 1024
+        )
+
+        reduction = 0
+
+        if downloaded_size > 0:
+
+            reduction = (
+                1
+                - (
+                    compressed_size
+                    / downloaded_size
+                )
+            ) * 100
+
+        caption = (
+            "✅ ویدئوی Instagram آماده شد.\n\n"
+            "🎬 کیفیت: 480p\n"
+            f"📦 حجم اولیه: {original_mb:.1f} MB\n"
+            f"📦 حجم نهایی: {compressed_mb:.1f} MB\n"
+            f"📉 کاهش حجم: {reduction:.0f}%"
+        )
+
+        with output_file.open("rb") as video_file:
+
+            await message.reply_video(
+                video=video_file,
+                caption=caption,
+                supports_streaming=True,
+                read_timeout=1800,
+                write_timeout=1800,
+                connect_timeout=60,
+                pool_timeout=60,
+            )
+
+        await status_message.delete()
+
+    except Exception as error:
+
+        error_text = str(error)
+
+        if not error_text:
+            error_text = repr(error)
+
+        await message.reply_text(
+            "❌ پردازش لینک Instagram انجام نشد.\n\n"
+            f"نوع خطا:\n"
+            f"{type(error).__name__}\n\n"
+            f"جزئیات:\n"
+            f"{error_text[:3000]}"
+        )
+
+    finally:
+
+        shutil.rmtree(
+            work_dir,
+            ignore_errors=True,
+        )
+
+
+# ============================================================
+# Quality callback
+# ============================================================
+
 async def handle_quality(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -156,7 +479,9 @@ async def handle_quality(
 
     await query.answer()
 
-    file_id = context.user_data.get("video_file_id")
+    file_id = context.user_data.get(
+        "video_file_id"
+    )
 
     if not file_id:
 
@@ -174,7 +499,8 @@ async def handle_quality(
 
     await query.edit_message_text(
         f"⏳ در حال فشرده‌سازی نسخه {quality}p...\n\n"
-        "برای فایل‌های بزرگ ممکن است مدتی طول بکشد."
+        "برای فایل‌های بزرگ ممکن است "
+        "مدتی طول بکشد."
     )
 
     work_dir = Path(
@@ -183,7 +509,10 @@ async def handle_quality(
         )
     )
 
-    input_file = work_dir / "input.mp4"
+    input_file = (
+        work_dir
+        / "input.mp4"
+    )
 
     output_file = (
         work_dir
@@ -193,7 +522,7 @@ async def handle_quality(
     try:
 
         # ====================================================
-        # Download
+        # Download Telegram video
         # ====================================================
 
         await query.message.reply_text(
@@ -287,6 +616,10 @@ async def handle_quality(
         )
 
 
+# ============================================================
+# Main
+# ============================================================
+
 def main():
 
     application = (
@@ -303,12 +636,33 @@ def main():
         .build()
     )
 
+    # --------------------------------------------------------
+    # Start
+    # --------------------------------------------------------
+
     application.add_handler(
         CommandHandler(
             "start",
             start,
         )
     )
+
+    # --------------------------------------------------------
+    # Instagram links
+    # قبل از سایر پیام‌های متنی
+    # --------------------------------------------------------
+
+    application.add_handler(
+        MessageHandler(
+            filters.TEXT
+            & ~filters.COMMAND,
+            handle_instagram_link,
+        )
+    )
+
+    # --------------------------------------------------------
+    # Quality buttons
+    # --------------------------------------------------------
 
     application.add_handler(
         CallbackQueryHandler(
@@ -317,12 +671,20 @@ def main():
         )
     )
 
+    # --------------------------------------------------------
+    # Telegram videos
+    # --------------------------------------------------------
+
     application.add_handler(
         MessageHandler(
             filters.VIDEO,
             handle_video,
         )
     )
+
+    # --------------------------------------------------------
+    # Telegram video documents
+    # --------------------------------------------------------
 
     application.add_handler(
         MessageHandler(
