@@ -30,11 +30,6 @@ LOCAL_API = "http://127.0.0.1:8081/bot"
 LOCAL_FILE_API = "http://127.0.0.1:8081/file/bot"
 
 
-# ============================================================
-# Telegram connection settings
-# مناسب برای فایل‌های حجیم
-# ============================================================
-
 TELEGRAM_REQUEST = HTTPXRequest(
     connection_pool_size=20,
     connect_timeout=60.0,
@@ -43,10 +38,6 @@ TELEGRAM_REQUEST = HTTPXRequest(
     pool_timeout=60.0,
 )
 
-
-# ============================================================
-# Instagram URL detection
-# ============================================================
 
 INSTAGRAM_URL_PATTERN = re.compile(
     r"https?://(?:www\.)?instagram\.com/"
@@ -64,17 +55,8 @@ def extract_instagram_url(text: str):
     if not match:
         return None
 
-    url = match.group(0)
+    return match.group(0).rstrip(".,!?;:)]}")
 
-    # حذف علائم احتمالی انتهای لینک
-    url = url.rstrip(".,!?;:)]}")
-
-    return url
-
-
-# ============================================================
-# Start
-# ============================================================
 
 async def start(
     update: Update,
@@ -92,10 +74,6 @@ async def start(
     )
 
 
-# ============================================================
-# Telegram video processor
-# ============================================================
-
 async def process_telegram_video(
     message,
     context: ContextTypes.DEFAULT_TYPE,
@@ -103,28 +81,15 @@ async def process_telegram_video(
 ):
 
     work_dir = Path(
-        tempfile.mkdtemp(
-            prefix="vicoan_"
-        )
+        tempfile.mkdtemp(prefix="vicoan_")
     )
 
-    input_file = (
-        work_dir
-        / "input.mp4"
-    )
-
-    output_file = (
-        work_dir
-        / "vicoan_480p.mp4"
-    )
+    input_file = work_dir / "input.mp4"
+    output_file = work_dir / "vicoan_480p.mp4"
 
     status_message = None
 
     try:
-
-        # ====================================================
-        # Download Telegram video
-        # ====================================================
 
         status_message = await message.reply_text(
             "⬇️ ویدئو دریافت شد.\n\n"
@@ -140,14 +105,9 @@ async def process_telegram_video(
         )
 
         if not input_file.exists():
-
             raise RuntimeError(
                 "فایل ورودی دانلود نشد."
             )
-
-        # ====================================================
-        # Compression
-        # ====================================================
 
         await status_message.edit_text(
             "⚙️ فایل دریافت شد.\n\n"
@@ -161,20 +121,14 @@ async def process_telegram_video(
         )
 
         if not output_file.exists():
-
             raise RuntimeError(
                 "فایل خروجی ساخته نشد."
             )
 
         if output_file.stat().st_size == 0:
-
             raise RuntimeError(
                 "فایل خروجی خالی است."
             )
-
-        # ====================================================
-        # Upload
-        # ====================================================
 
         await status_message.edit_text(
             "⬆️ فشرده‌سازی تمام شد.\n\n"
@@ -200,4 +154,66 @@ async def process_telegram_video(
         error_text = str(error)
 
         if not error_text:
-            error_text =
+            error_text = repr(error)
+
+        await message.reply_text(
+            "❌ هنگام پردازش فایل خطایی رخ داد.\n\n"
+            f"نوع خطا:\n"
+            f"{type(error).__name__}\n\n"
+            f"جزئیات:\n"
+            f"{error_text[:3000]}"
+        )
+
+    finally:
+
+        shutil.rmtree(
+            work_dir,
+            ignore_errors=True,
+        )
+
+
+async def handle_video(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+
+    message = update.message
+
+    if not message or not message.video:
+        return
+
+    video = message.video
+
+    if (
+        video.file_size
+        and video.file_size > MAX_FILE_SIZE
+    ):
+        await message.reply_text(
+            "❌ حجم فایل بیشتر از ۲ گیگابایت است."
+        )
+        return
+
+    await process_telegram_video(
+        message=message,
+        context=context,
+        file_id=video.file_id,
+    )
+
+
+async def handle_document(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+
+    message = update.message
+
+    if not message or not message.document:
+        return
+
+    document = message.document
+
+    mime_type = document.mime_type or ""
+
+    if not mime_type.startswith("video/"):
+        await message.reply_text(
+            "❌ این فایل ویدئویی
