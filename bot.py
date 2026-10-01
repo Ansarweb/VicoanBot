@@ -135,12 +135,13 @@ async def run_compression(
     output_path,
 ):
     """
-    اجرای فشرده‌سازی و نمایش خطای واقعی.
+    اجرای واقعی فشرده‌سازی.
+    compress_video یک تابع async است،
+    بنابراین باید مستقیماً await شود.
     """
 
     try:
-        result = await asyncio.to_thread(
-            compress_video,
+        result = await compress_video(
             input_path,
             output_path,
             "480",
