@@ -1,3 +1,4 @@
 python-telegram-bot==22.5
 python-dotenv==1.1.1
 psutil==7.0.0
+yt-dlp
