@@ -134,12 +134,6 @@ async def run_compression(
     input_path,
     output_path,
 ):
-    """
-    اجرای واقعی فشرده‌سازی.
-    compress_video یک تابع async است،
-    بنابراین باید مستقیماً await شود.
-    """
-
     try:
         result = await compress_video(
             input_path,
@@ -367,6 +361,8 @@ async def download_instagram_video(
         "--write-info-json",
         "--no-warnings",
         "--restrict-filenames",
+        "--extractor-args",
+        "instagram:skip_auth=False",
         "-o",
         output_template,
         url,
@@ -410,13 +406,18 @@ async def download_instagram_video(
 
     video_path = video_files[0]
 
-    info_path = Path(
-        str(video_path) + ".info.json"
-    )
-
     caption = None
 
-    if info_path.exists():
+    # پیدا کردن فایل اطلاعات اینستاگرام
+    info_files = list(
+        Path(output_dir).glob(
+            "instagram_video*.info.json"
+        )
+    )
+
+    if info_files:
+        info_path = info_files[0]
+
         try:
             with open(
                 info_path,
@@ -425,11 +426,29 @@ async def download_instagram_video(
             ) as f:
                 info = json.load(f)
 
+            # تلاش برای پیدا کردن کپشن
             caption = (
                 info.get("description")
+                or info.get("caption")
                 or info.get("title")
+                or info.get("fulltitle")
                 or None
             )
+
+            if caption:
+                print(
+                    "========== INSTAGRAM CAPTION =========="
+                )
+                print(
+                    str(caption)[:2000]
+                )
+                print(
+                    "======================================="
+                )
+            else:
+                print(
+                    "Instagram caption was not found."
+                )
 
         except Exception as e:
             print(
