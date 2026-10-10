@@ -295,8 +295,7 @@ async def handle_document(
 
 async def download_instagram_videos(url, output_dir):
     """
-    دانلود ویدیوهای موجود در یک پست اینستاگرام.
-    در پست چندویدیویی، برای هر ویدیوی قابل‌استخراج یک فایل برمی‌گرداند.
+    دانلود ویدیوهای قابل‌استخراج از پست اینستاگرام.
     """
 
     output_template = os.path.join(
@@ -330,8 +329,15 @@ async def download_instagram_videos(url, output_dir):
 
     stdout, stderr = await process.communicate()
 
-    stdout_text = stdout.decode("utf-8", errors="ignore").strip()
-    stderr_text = stderr.decode("utf-8", errors="ignore").strip()
+    stdout_text = stdout.decode(
+        "utf-8",
+        errors="ignore"
+    ).strip()
+
+    stderr_text = stderr.decode(
+        "utf-8",
+        errors="ignore"
+    ).strip()
 
     if stdout_text:
         print("Instagram yt-dlp output:")
@@ -379,8 +385,6 @@ async def download_instagram_videos(url, output_dir):
 
     for video_path in video_files:
         caption = None
-
-        # فایل اطلاعات هر ویدیو را جداگانه پیدا می‌کنیم.
         info_path = video_path.with_suffix(".info.json")
 
         if info_path.exists():
@@ -408,24 +412,25 @@ async def download_instagram_videos(url, output_dir):
 
         videos.append((str(video_path), caption))
 
-    print(
-        f"Instagram videos found: {len(videos)}"
-    )
+    print(f"Instagram videos found: {len(videos)}")
 
     return videos
 
 
 async def handle_instagram_link(message, url):
     temp_dir = tempfile.mkdtemp(prefix="vicoan_instagram_")
+    status_message = None
 
     try:
+        original_url = url.strip().rstrip(".,!?)]}")
+
         status_message = await message.reply_text(
             "📥 در حال دریافت ویدیوهای اینستاگرام...\n"
             "اگر پست چند ویدیو داشته باشد، برای همه تلاش می‌کنم."
         )
 
         videos = await download_instagram_videos(
-            url,
+            original_url,
             temp_dir
         )
 
@@ -482,19 +487,24 @@ async def handle_instagram_link(message, url):
                     f"📤 در حال ارسال ویدیوی {index} از {total_videos}..."
                 )
 
-                # برای چند ویدیو، شماره را به کپشن اضافه می‌کنیم.
+                caption_parts = []
+
                 if total_videos > 1:
-                    if instagram_caption:
-                        caption = (
-                            f"ویدیوی {index} از {total_videos}\n\n"
-                            + str(instagram_caption)
-                        )
-                    else:
-                        caption = (
-                            f"ویدیوی {index} از {total_videos}"
-                        )
-                else:
-                    caption = instagram_caption
+                    caption_parts.append(
+                        f"ویدیوی {index} از {total_videos}"
+                    )
+
+                if instagram_caption:
+                    caption_parts.append(
+                        str(instagram_caption).strip()
+                    )
+
+                # افزودن لینک اصلی اینستاگرام به کپشن
+                caption_parts.append(
+                    f"🔗 لینک اصلی اینستاگرام:\n{original_url}"
+                )
+
+                caption = "\n\n".join(caption_parts)
 
                 await send_video(
                     message=message,
@@ -519,9 +529,7 @@ async def handle_instagram_link(message, url):
         )
 
         if failed_videos:
-            summary += (
-                f"\nتعداد ناموفق: {failed_videos}"
-            )
+            summary += f"\nتعداد ناموفق: {failed_videos}"
 
         await status_message.edit_text(summary)
 
@@ -537,18 +545,18 @@ async def handle_instagram_link(message, url):
         traceback.print_exc()
 
         try:
-            await status_message.edit_text(
-                "❌ خطای پردازش اینستاگرام:\n\n"
-                + error_text[:3500]
-            )
-        except Exception:
-            try:
+            if status_message:
+                await status_message.edit_text(
+                    "❌ خطای پردازش اینستاگرام:\n\n"
+                    + error_text[:3500]
+                )
+            else:
                 await message.reply_text(
                     "❌ خطای پردازش اینستاگرام:\n\n"
                     + error_text[:3500]
                 )
-            except Exception:
-                pass
+        except Exception:
+            pass
 
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -584,8 +592,8 @@ async def start(
         "📸 لینک عمومی پست یا ریل اینستاگرام "
         "را هم بفرستید تا ویدیوهای قابل‌دریافت آن "
         "دانلود و به 480p تبدیل شوند.\n\n"
-        "📝 کپشن و توضیحات ویدیو نیز تا حد امکان "
-        "همراه ویدیوی خروجی حفظ می‌شود.\n\n"
+        "📝 کپشن و لینک اصلی اینستاگرام تا حد امکان "
+        "همراه ویدیوی خروجی ارسال می‌شوند.\n\n"
         "❌ نیازی به انتخاب کیفیت نیست."
     )
 
