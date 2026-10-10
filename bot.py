@@ -27,7 +27,6 @@ MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024  # 2 GB
 LOCAL_API = "http://127.0.0.1:8081/bot"
 LOCAL_FILE_API = "http://127.0.0.1:8081/file/bot"
 
-
 INSTAGRAM_REGEX = re.compile(
     r"https?://(?:www\.)?instagram\.com/"
     r"(?:reel|reels|p|tv)/[^\s]+",
@@ -110,17 +109,11 @@ async def send_video(
     info_text = "\n".join(info_lines)
 
     if caption:
-        combined_caption = (
-            caption
-            + "\n\n"
-            + info_text
-        )
+        combined_caption = caption + "\n\n" + info_text
     else:
         combined_caption = info_text
 
-    combined_caption = prepare_caption(
-        combined_caption
-    )
+    combined_caption = prepare_caption(combined_caption)
 
     with open(video_path, "rb") as video_file:
         await message.reply_video(
@@ -130,10 +123,7 @@ async def send_video(
         )
 
 
-async def run_compression(
-    input_path,
-    output_path,
-):
+async def run_compression(input_path, output_path):
     try:
         result = await compress_video(
             input_path,
@@ -144,8 +134,7 @@ async def run_compression(
         if not os.path.exists(output_path):
             raise RuntimeError(
                 "compress_video اجرا شد اما فایل خروجی ساخته نشد.\n\n"
-                "نتیجه تابع:\n"
-                + str(result)
+                "نتیجه تابع:\n" + str(result)
             )
 
         return True, None
@@ -154,21 +143,14 @@ async def run_compression(
         error_text = (
             "نوع خطا: "
             + type(e).__name__
-            + "\n\n"
-            + "پیام خطا:\n"
+            + "\n\nپیام خطا:\n"
             + str(e)
         )
 
-        print(
-            "========== COMPRESSION ERROR =========="
-        )
+        print("========== COMPRESSION ERROR ==========")
         print(error_text)
-
         traceback.print_exc()
-
-        print(
-            "======================================="
-        )
+        print("=======================================")
 
         return False, error_text
 
@@ -179,16 +161,10 @@ async def process_telegram_video(
     file_name="video.mp4",
     caption=None,
 ):
-    temp_dir = tempfile.mkdtemp(
-        prefix="vicoan_"
-    )
+    temp_dir = tempfile.mkdtemp(prefix="vicoan_")
 
     try:
-        input_path = os.path.join(
-            temp_dir,
-            file_name
-        )
-
+        input_path = os.path.join(temp_dir, file_name)
         output_path = os.path.join(
             temp_dir,
             "compressed_480p.mp4"
@@ -199,17 +175,11 @@ async def process_telegram_video(
             "کیفیت خروجی: 480p"
         )
 
-        telegram_file = await message.get_bot().get_file(
-            file_id
-        )
+        telegram_file = await message.get_bot().get_file(file_id)
 
-        await telegram_file.download_to_drive(
-            input_path
-        )
+        await telegram_file.download_to_drive(input_path)
 
-        original_size = os.path.getsize(
-            input_path
-        )
+        original_size = os.path.getsize(input_path)
 
         if original_size > MAX_FILE_SIZE:
             await status_message.edit_text(
@@ -224,8 +194,7 @@ async def process_telegram_video(
 
         if not success:
             await status_message.edit_text(
-                "❌ خطای واقعی فشرده‌سازی:\n\n"
-                + error_text
+                "❌ خطای واقعی فشرده‌سازی:\n\n" + error_text
             )
             return
 
@@ -247,30 +216,22 @@ async def process_telegram_video(
         error_text = (
             "نوع خطا: "
             + type(e).__name__
-            + "\n\n"
-            + "پیام:\n"
+            + "\n\nپیام:\n"
             + str(e)
         )
 
-        print(
-            "Telegram processing error:"
-        )
-
+        print("Telegram processing error:")
         traceback.print_exc()
 
         try:
             await message.reply_text(
-                "❌ خطای پردازش:\n\n"
-                + error_text
+                "❌ خطای پردازش:\n\n" + error_text
             )
         except Exception:
             pass
 
     finally:
-        shutil.rmtree(
-            temp_dir,
-            ignore_errors=True
-        )
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 async def handle_video(
@@ -284,10 +245,7 @@ async def handle_video(
 
     video = message.video
 
-    if (
-        video.file_size
-        and video.file_size > MAX_FILE_SIZE
-    ):
+    if video.file_size and video.file_size > MAX_FILE_SIZE:
         await message.reply_text(
             "❌ حجم ویدیو بیشتر از 2 گیگابایت است."
         )
@@ -311,7 +269,6 @@ async def handle_document(
         return
 
     document = message.document
-
     mime_type = document.mime_type or ""
 
     if not mime_type.startswith("video/"):
@@ -320,19 +277,13 @@ async def handle_document(
         )
         return
 
-    if (
-        document.file_size
-        and document.file_size > MAX_FILE_SIZE
-    ):
+    if document.file_size and document.file_size > MAX_FILE_SIZE:
         await message.reply_text(
             "❌ حجم فایل بیشتر از 2 گیگابایت است."
         )
         return
 
-    file_name = (
-        document.file_name
-        or "telegram_video.mp4"
-    )
+    file_name = document.file_name or "telegram_video.mp4"
 
     await process_telegram_video(
         message=message,
@@ -342,18 +293,21 @@ async def handle_document(
     )
 
 
-async def download_instagram_video(
-    url,
-    output_dir,
-):
+async def download_instagram_videos(url, output_dir):
+    """
+    دانلود ویدیوهای موجود در یک پست اینستاگرام.
+    در پست چندویدیویی، برای هر ویدیوی قابل‌استخراج یک فایل برمی‌گرداند.
+    """
+
     output_template = os.path.join(
         output_dir,
-        "instagram_video.%(ext)s"
+        "instagram_video_%(autonumber)03d.%(ext)s"
     )
 
     command = [
         "yt-dlp",
-        "--no-playlist",
+        "--yes-playlist",
+        "--ignore-errors",
         "--format",
         "bestvideo+bestaudio/best",
         "--merge-output-format",
@@ -376,184 +330,228 @@ async def download_instagram_video(
 
     stdout, stderr = await process.communicate()
 
-    if process.returncode != 0:
-        error_text = stderr.decode(
-            "utf-8",
-            errors="ignore"
-        ).strip()
+    stdout_text = stdout.decode("utf-8", errors="ignore").strip()
+    stderr_text = stderr.decode("utf-8", errors="ignore").strip()
 
-        raise RuntimeError(
-            error_text
-            or "دانلود اینستاگرام ناموفق بود."
-        )
+    if stdout_text:
+        print("Instagram yt-dlp output:")
+        print(stdout_text[-5000:])
 
-    video_files = []
+    if stderr_text:
+        print("Instagram yt-dlp messages:")
+        print(stderr_text[-5000:])
 
-    for path in Path(output_dir).glob(
-        "instagram_video.*"
-    ):
-        if path.suffix.lower() not in (
-            ".json",
-            ".part",
-            ".ytdl",
-        ):
-            video_files.append(path)
+    video_extensions = {
+        ".mp4",
+        ".mkv",
+        ".webm",
+        ".mov",
+        ".m4v",
+    }
+
+    video_files = sorted(
+        [
+            path
+            for path in Path(output_dir).glob("instagram_video_*")
+            if path.is_file()
+            and path.suffix.lower() in video_extensions
+            and not path.name.endswith(".part")
+        ],
+        key=lambda path: path.name
+    )
 
     if not video_files:
+        details = stderr_text or stdout_text
+
+        if not details:
+            details = (
+                "هیچ فایل ویدیویی قابل‌استخراجی پیدا نشد. "
+                "ممکن است پست فقط عکس داشته باشد، خصوصی باشد، "
+                "یا اینستاگرام اجازه دریافت ویدیو را ندهد."
+            )
+
         raise RuntimeError(
-            "فایل ویدیویی اینستاگرام پیدا نشد."
+            "دانلود ویدیوی اینستاگرام موفق نبود.\n\n"
+            + details[-3000:]
         )
 
-    video_path = video_files[0]
+    videos = []
 
-    caption = None
+    for video_path in video_files:
+        caption = None
 
-    # پیدا کردن فایل اطلاعات اینستاگرام
-    info_files = list(
-        Path(output_dir).glob(
-            "instagram_video*.info.json"
-        )
+        # فایل اطلاعات هر ویدیو را جداگانه پیدا می‌کنیم.
+        info_path = video_path.with_suffix(".info.json")
+
+        if info_path.exists():
+            try:
+                with open(
+                    info_path,
+                    "r",
+                    encoding="utf-8"
+                ) as f:
+                    info = json.load(f)
+
+                caption = (
+                    info.get("description")
+                    or info.get("caption")
+                    or info.get("title")
+                    or info.get("fulltitle")
+                    or None
+                )
+
+            except Exception as e:
+                print(
+                    "Instagram metadata error:",
+                    repr(e)
+                )
+
+        videos.append((str(video_path), caption))
+
+    print(
+        f"Instagram videos found: {len(videos)}"
     )
 
-    if info_files:
-        info_path = info_files[0]
-
-        try:
-            with open(
-                info_path,
-                "r",
-                encoding="utf-8"
-            ) as f:
-                info = json.load(f)
-
-            # تلاش برای پیدا کردن کپشن
-            caption = (
-                info.get("description")
-                or info.get("caption")
-                or info.get("title")
-                or info.get("fulltitle")
-                or None
-            )
-
-            if caption:
-                print(
-                    "========== INSTAGRAM CAPTION =========="
-                )
-                print(
-                    str(caption)[:2000]
-                )
-                print(
-                    "======================================="
-                )
-            else:
-                print(
-                    "Instagram caption was not found."
-                )
-
-        except Exception as e:
-            print(
-                "Instagram metadata error:",
-                repr(e)
-            )
-
-    return str(video_path), caption
+    return videos
 
 
-async def handle_instagram_link(
-    message,
-    url,
-):
-    temp_dir = tempfile.mkdtemp(
-        prefix="vicoan_instagram_"
-    )
+async def handle_instagram_link(message, url):
+    temp_dir = tempfile.mkdtemp(prefix="vicoan_instagram_")
 
     try:
         status_message = await message.reply_text(
-            "📥 در حال دریافت ویدیوی اینستاگرام..."
+            "📥 در حال دریافت ویدیوهای اینستاگرام...\n"
+            "اگر پست چند ویدیو داشته باشد، برای همه تلاش می‌کنم."
         )
 
-        video_path, instagram_caption = (
-            await download_instagram_video(
-                url,
-                temp_dir
+        videos = await download_instagram_videos(
+            url,
+            temp_dir
+        )
+
+        total_videos = len(videos)
+        sent_videos = 0
+        failed_videos = 0
+
+        for index, item in enumerate(videos, start=1):
+            video_path, instagram_caption = item
+
+            try:
+                original_size = os.path.getsize(video_path)
+
+                if original_size > MAX_FILE_SIZE:
+                    failed_videos += 1
+                    await message.reply_text(
+                        f"⚠️ ویدیوی {index} به دلیل حجم بیشتر از 2 گیگابایت رد شد."
+                    )
+                    continue
+
+                compressed_path = os.path.join(
+                    temp_dir,
+                    f"instagram_480p_{index:03d}.mp4"
+                )
+
+                await status_message.edit_text(
+                    f"⚙️ در حال فشرده‌سازی ویدیوی {index} از {total_videos}...\n"
+                    "کیفیت خروجی: 480p"
+                )
+
+                success, error_text = await run_compression(
+                    video_path,
+                    compressed_path
+                )
+
+                if not success:
+                    failed_videos += 1
+                    print(
+                        f"Instagram video {index} compression failed:",
+                        error_text
+                    )
+                    continue
+
+                compressed_size = os.path.getsize(compressed_path)
+
+                if compressed_size > MAX_FILE_SIZE:
+                    failed_videos += 1
+                    await message.reply_text(
+                        f"⚠️ فایل خروجی ویدیوی {index} بیشتر از 2 گیگابایت است و ارسال نشد."
+                    )
+                    continue
+
+                await status_message.edit_text(
+                    f"📤 در حال ارسال ویدیوی {index} از {total_videos}..."
+                )
+
+                # برای چند ویدیو، شماره را به کپشن اضافه می‌کنیم.
+                if total_videos > 1:
+                    if instagram_caption:
+                        caption = (
+                            f"ویدیوی {index} از {total_videos}\n\n"
+                            + str(instagram_caption)
+                        )
+                    else:
+                        caption = (
+                            f"ویدیوی {index} از {total_videos}"
+                        )
+                else:
+                    caption = instagram_caption
+
+                await send_video(
+                    message=message,
+                    video_path=compressed_path,
+                    caption=caption,
+                    original_size=original_size,
+                )
+
+                sent_videos += 1
+
+            except Exception:
+                failed_videos += 1
+                print(
+                    f"Instagram video {index} processing error:"
+                )
+                traceback.print_exc()
+
+        summary = (
+            "✅ پردازش پست اینستاگرام تمام شد.\n\n"
+            f"تعداد ویدیوهای پیدا‌شده: {total_videos}\n"
+            f"تعداد ارسال‌شده: {sent_videos}"
+        )
+
+        if failed_videos:
+            summary += (
+                f"\nتعداد ناموفق: {failed_videos}"
             )
-        )
 
-        original_size = os.path.getsize(
-            video_path
-        )
-
-        if original_size > MAX_FILE_SIZE:
-            await status_message.edit_text(
-                "❌ حجم ویدیوی اینستاگرام بیشتر "
-                "از 2 گیگابایت است."
-            )
-            return
-
-        compressed_path = os.path.join(
-            temp_dir,
-            "instagram_480p.mp4"
-        )
-
-        await status_message.edit_text(
-            "⚙️ در حال فشرده‌سازی...\n"
-            "کیفیت خروجی: 480p"
-        )
-
-        success, error_text = await run_compression(
-            video_path,
-            compressed_path
-        )
-
-        if not success:
-            await status_message.edit_text(
-                "❌ خطای واقعی فشرده‌سازی:\n\n"
-                + error_text
-            )
-            return
-
-        await status_message.edit_text(
-            "📤 آماده شد.\n"
-            "در حال ارسال ویدیوی 480p..."
-        )
-
-        await send_video(
-            message=message,
-            video_path=compressed_path,
-            caption=instagram_caption,
-            original_size=original_size,
-        )
-
-        await status_message.delete()
+        await status_message.edit_text(summary)
 
     except Exception as e:
         error_text = (
             "نوع خطا: "
             + type(e).__name__
-            + "\n\n"
-            + "پیام:\n"
+            + "\n\nپیام:\n"
             + str(e)
         )
 
-        print(
-            "Instagram processing error:"
-        )
-
+        print("Instagram processing error:")
         traceback.print_exc()
 
         try:
-            await message.reply_text(
+            await status_message.edit_text(
                 "❌ خطای پردازش اینستاگرام:\n\n"
-                + error_text
+                + error_text[:3500]
             )
         except Exception:
-            pass
+            try:
+                await message.reply_text(
+                    "❌ خطای پردازش اینستاگرام:\n\n"
+                    + error_text[:3500]
+                )
+            except Exception:
+                pass
 
     finally:
-        shutil.rmtree(
-            temp_dir,
-            ignore_errors=True
-        )
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 async def handle_text(
@@ -565,21 +563,14 @@ async def handle_text(
     if not message or not message.text:
         return
 
-    match = INSTAGRAM_REGEX.search(
-        message.text
-    )
+    match = INSTAGRAM_REGEX.search(message.text)
 
     if not match:
         return
 
-    url = match.group(0).rstrip(
-        ".,!?)]}"
-    )
+    url = match.group(0).rstrip(".,!?)]}")
 
-    await handle_instagram_link(
-        message,
-        url
-    )
+    await handle_instagram_link(message, url)
 
 
 async def start(
@@ -591,7 +582,8 @@ async def start(
         "🎬 ویدیوی تلگرام را بفرستید؛ "
         "به‌صورت خودکار به 480p فشرده می‌شود.\n\n"
         "📸 لینک عمومی پست یا ریل اینستاگرام "
-        "را هم بفرستید تا دانلود و به 480p تبدیل شود.\n\n"
+        "را هم بفرستید تا ویدیوهای قابل‌دریافت آن "
+        "دانلود و به 480p تبدیل شوند.\n\n"
         "📝 کپشن و توضیحات ویدیو نیز تا حد امکان "
         "همراه ویدیوی خروجی حفظ می‌شود.\n\n"
         "❌ نیازی به انتخاب کیفیت نیست."
@@ -600,9 +592,7 @@ async def start(
 
 def main():
     if not BOT_TOKEN:
-        raise RuntimeError(
-            "BOT_TOKEN پیدا نشد."
-        )
+        raise RuntimeError("BOT_TOKEN پیدا نشد.")
 
     request = HTTPXRequest(
         connection_pool_size=20,
@@ -622,10 +612,7 @@ def main():
     )
 
     application.add_handler(
-        CommandHandler(
-            "start",
-            start
-        )
+        CommandHandler("start", start)
     )
 
     application.add_handler(
@@ -649,9 +636,7 @@ def main():
         )
     )
 
-    print(
-        "VicoanBot started."
-    )
+    print("VicoanBot started.")
 
     application.run_polling(
         drop_pending_updates=True
