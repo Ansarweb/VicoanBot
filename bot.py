@@ -1,3 +1,4 @@
+
 import os
 import re
 import shutil
@@ -22,7 +23,7 @@ from compressor import compress_video
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024  # 2 GB
+MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024
 
 LOCAL_API = "http://127.0.0.1:8081/bot"
 LOCAL_FILE_API = "http://127.0.0.1:8081/file/bot"
@@ -42,10 +43,8 @@ def format_size(size_bytes):
 
     if size < 1024:
         return f"{size:.0f} B"
-
     if size < 1024 * 1024:
         return f"{size / 1024:.1f} KB"
-
     if size < 1024 * 1024 * 1024:
         return f"{size / (1024 * 1024):.1f} MB"
 
@@ -56,10 +55,7 @@ def reduction_percent(original_size, final_size):
     if not original_size or original_size <= 0:
         return 0
 
-    return max(
-        0,
-        round((1 - (final_size / original_size)) * 100)
-    )
+    return max(0, round((1 - final_size / original_size) * 100))
 
 
 def prepare_caption(caption):
@@ -77,41 +73,30 @@ def prepare_caption(caption):
     return caption[:1000].rstrip() + "\n\n…"
 
 
-async def send_video(
-    message,
-    video_path,
-    caption=None,
-    original_size=None,
-):
-    final_size = os.path.getsize(video_path)
+# =========================================================
+# VIDEO
+# =========================================================
 
-    reduction = reduction_percent(
-        original_size,
-        final_size
-    )
+async def send_video(message, video_path, caption=None, original_size=None):
+    final_size = os.path.getsize(video_path)
+    reduction = reduction_percent(original_size, final_size)
 
     info_lines = []
 
     if original_size:
-        info_lines.append(
-            f"حجم اولیه: {format_size(original_size)}"
-        )
+        info_lines.append(f"حجم اولیه: {format_size(original_size)}")
 
-    info_lines.append(
-        f"حجم نهایی: {format_size(final_size)}"
-    )
+    info_lines.append(f"حجم نهایی: {format_size(final_size)}")
 
     if original_size:
-        info_lines.append(
-            f"کاهش حجم: {reduction}%"
-        )
+        info_lines.append(f"کاهش حجم: {reduction}%")
 
     info_text = "\n".join(info_lines)
 
-    if caption:
-        combined_caption = caption + "\n\n" + info_text
-    else:
-        combined_caption = info_text
+    combined_caption = (
+        caption + "\n\n" + info_text
+        if caption else info_text
+    )
 
     combined_caption = prepare_caption(combined_caption)
 
@@ -133,18 +118,16 @@ async def run_compression(input_path, output_path):
 
         if not os.path.exists(output_path):
             raise RuntimeError(
-                "compress_video اجرا شد اما فایل خروجی ساخته نشد.\n\n"
-                "نتیجه تابع:\n" + str(result)
+                "compress_video اجرا شد اما فایل خروجی ساخته نشد.\n"
+                + str(result)
             )
 
         return True, None
 
     except Exception as e:
         error_text = (
-            "نوع خطا: "
-            + type(e).__name__
-            + "\n\nپیام خطا:\n"
-            + str(e)
+            "نوع خطا: " + type(e).__name__
+            + "\n\nپیام خطا:\n" + str(e)
         )
 
         print("========== COMPRESSION ERROR ==========")
@@ -164,11 +147,9 @@ async def process_telegram_video(
     temp_dir = tempfile.mkdtemp(prefix="vicoan_")
 
     try:
+        file_name = Path(file_name).name or "video.mp4"
         input_path = os.path.join(temp_dir, file_name)
-        output_path = os.path.join(
-            temp_dir,
-            "compressed_480p.mp4"
-        )
+        output_path = os.path.join(temp_dir, "compressed_480p.mp4")
 
         status_message = await message.reply_text(
             "⏳ در حال دانلود و فشرده‌سازی ویدیو...\n"
@@ -176,7 +157,6 @@ async def process_telegram_video(
         )
 
         telegram_file = await message.get_bot().get_file(file_id)
-
         await telegram_file.download_to_drive(input_path)
 
         original_size = os.path.getsize(input_path)
@@ -214,13 +194,11 @@ async def process_telegram_video(
 
     except Exception as e:
         error_text = (
-            "نوع خطا: "
-            + type(e).__name__
-            + "\n\nپیام:\n"
-            + str(e)
+            "نوع خطا: " + type(e).__name__
+            + "\n\nپیام:\n" + str(e)
         )
 
-        print("Telegram processing error:")
+        print("Telegram video processing error:")
         traceback.print_exc()
 
         try:
@@ -234,10 +212,7 @@ async def process_telegram_video(
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-async def handle_video(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def handle_video(update, context):
     message = update.effective_message
 
     if not message or not message.video:
@@ -259,22 +234,15 @@ async def handle_video(
     )
 
 
-async def handle_document(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def handle_document_video(update, context):
     message = update.effective_message
 
     if not message or not message.document:
         return
 
     document = message.document
-    mime_type = document.mime_type or ""
 
-    if not mime_type.startswith("video/"):
-        await message.reply_text(
-            "❌ این فایل ویدیویی نیست."
-        )
+    if not (document.mime_type or "").startswith("video/"):
         return
 
     if document.file_size and document.file_size > MAX_FILE_SIZE:
@@ -283,20 +251,287 @@ async def handle_document(
         )
         return
 
-    file_name = document.file_name or "telegram_video.mp4"
-
     await process_telegram_video(
         message=message,
         file_id=document.file_id,
-        file_name=file_name,
+        file_name=document.file_name or "telegram_video.mp4",
         caption=message.caption,
     )
 
 
+# =========================================================
+# AUDIO COMPRESSION
+# =========================================================
+
+async def compress_audio_file(input_path, output_dir, is_voice=False):
+    """
+    Music/audio: MP3 128kbps
+    Telegram voice: Opus 24kbps mono
+
+    اگر خروجی کوچک‌تر نشود، فایل اصلی حفظ می‌شود.
+    """
+
+    input_suffix = Path(input_path).suffix.lower() or ".bin"
+
+    output_ext = ".ogg" if is_voice else ".mp3"
+
+    compressed_path = os.path.join(
+        output_dir,
+        "compressed_audio" + output_ext
+    )
+
+    if is_voice:
+        audio_args = [
+            "-c:a", "libopus",
+            "-b:a", "24k",
+            "-vbr", "on",
+            "-application", "voip",
+            "-ac", "1",
+        ]
+    else:
+        audio_args = [
+            "-c:a", "libmp3lame",
+            "-b:a", "128k",
+            "-ar", "44100",
+            "-ac", "2",
+        ]
+
+    command = [
+        "ffmpeg",
+        "-y",
+        "-i", input_path,
+        "-vn",
+        "-map", "0:a:0",
+        "-map_metadata", "0",
+        *audio_args,
+        compressed_path,
+    ]
+
+    process = await asyncio.create_subprocess_exec(
+        *command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    stdout, stderr = await process.communicate()
+
+    if process.returncode != 0 or not os.path.exists(compressed_path):
+        error = stderr.decode("utf-8", errors="replace")
+
+        raise RuntimeError(
+            "فشرده‌سازی صوتی با FFmpeg ناموفق بود:\n"
+            + error[-3000:]
+        )
+
+    if os.path.getsize(compressed_path) == 0:
+        raise RuntimeError("فایل صوتی خروجی خالی است.")
+
+    original_size = os.path.getsize(input_path)
+    compressed_size = os.path.getsize(compressed_path)
+
+    if compressed_size >= original_size:
+        os.remove(compressed_path)
+
+        original_path = os.path.join(
+            output_dir,
+            "original_audio" + input_suffix
+        )
+
+        shutil.copy2(input_path, original_path)
+
+        return original_path, False
+
+    return compressed_path, True
+
+
+# =========================================================
+# PROCESS TELEGRAM AUDIO AND VOICE
+# =========================================================
+
+async def process_telegram_audio(
+    message,
+    file_id,
+    file_name="audio",
+    is_voice=False,
+    title=None,
+    performer=None,
+    caption=None,
+):
+    temp_dir = tempfile.mkdtemp(prefix="vicoan_audio_")
+    status_message = None
+
+    try:
+        safe_name = Path(file_name or "audio").name
+
+        if not Path(safe_name).suffix:
+            safe_name += ".ogg" if is_voice else ".audio"
+
+        input_path = os.path.join(temp_dir, safe_name)
+
+        status_message = await message.reply_text(
+            "⏳ در حال دریافت و فشرده‌سازی فایل صوتی..."
+        )
+
+        telegram_file = await message.get_bot().get_file(file_id)
+
+        await telegram_file.download_to_drive(input_path)
+
+        original_size = os.path.getsize(input_path)
+
+        if original_size > MAX_FILE_SIZE:
+            await status_message.edit_text(
+                "❌ حجم فایل بیشتر از 2 گیگابایت است."
+            )
+            return
+
+        output_path, compressed = await compress_audio_file(
+            input_path,
+            temp_dir,
+            is_voice=is_voice,
+        )
+
+        final_size = os.path.getsize(output_path)
+        reduction = reduction_percent(original_size, final_size)
+
+        info = (
+            f"حجم اولیه: {format_size(original_size)}\n"
+            f"حجم نهایی: {format_size(final_size)}\n"
+        )
+
+        if compressed:
+            info += f"کاهش حجم: {reduction}%"
+        else:
+            info += (
+                "فایل اصلی حفظ شد؛ "
+                "فشرده‌سازی حجم را کمتر نکرد."
+            )
+
+        await status_message.edit_text(
+            "📤 فشرده‌سازی انجام شد؛ در حال ارسال..."
+        )
+
+        final_caption = prepare_caption(
+            ((caption.strip() + "\n\n") if caption else "") + info
+        )
+
+        with open(output_path, "rb") as audio_file:
+
+            if is_voice:
+                await message.reply_voice(
+                    voice=audio_file,
+                    caption=final_caption,
+                )
+            else:
+                await message.reply_audio(
+                    audio=audio_file,
+                    title=title,
+                    performer=performer,
+                    caption=final_caption,
+                )
+
+        await status_message.delete()
+
+    except Exception as e:
+        print("Telegram audio processing error:")
+        traceback.print_exc()
+
+        error_text = (
+            "نوع خطا: " + type(e).__name__
+            + "\n\nپیام:\n" + str(e)
+        )
+
+        try:
+            if status_message:
+                await status_message.edit_text(
+                    "❌ خطای پردازش فایل صوتی:\n\n"
+                    + error_text[:3000]
+                )
+            else:
+                await message.reply_text(
+                    "❌ خطای پردازش فایل صوتی:\n\n"
+                    + error_text[:3000]
+                )
+        except Exception:
+            pass
+
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+# =========================================================
+# AUDIO HANDLERS
+# =========================================================
+
+async def handle_audio(update, context):
+    message = update.effective_message
+
+    if not message or not message.audio:
+        return
+
+    audio = message.audio
+
+    await process_telegram_audio(
+        message=message,
+        file_id=audio.file_id,
+        file_name=audio.file_name or "telegram_audio.mp3",
+        is_voice=False,
+        title=audio.title,
+        performer=audio.performer,
+        caption=message.caption,
+    )
+
+
+async def handle_voice(update, context):
+    message = update.effective_message
+
+    if not message or not message.voice:
+        return
+
+    await process_telegram_audio(
+        message=message,
+        file_id=message.voice.file_id,
+        file_name="telegram_voice.ogg",
+        is_voice=True,
+        caption=message.caption,
+    )
+
+
+async def handle_audio_document(update, context):
+    message = update.effective_message
+
+    if not message or not message.document:
+        return
+
+    document = message.document
+
+    mime_type = (document.mime_type or "").lower()
+    file_name = document.file_name or "telegram_audio"
+
+    audio_extensions = {
+        ".mp3", ".m4a", ".aac", ".wav", ".flac",
+        ".ogg", ".opus", ".wma", ".aiff", ".alac",
+    }
+
+    if not (
+        mime_type.startswith("audio/")
+        or Path(file_name).suffix.lower() in audio_extensions
+    ):
+        return
+
+    await process_telegram_audio(
+        message=message,
+        file_id=document.file_id,
+        file_name=file_name,
+        is_voice=False,
+        caption=message.caption,
+    )
+
+
+# =========================================================
+# INSTAGRAM DOWNLOADER
+# =========================================================
+
 async def download_instagram_videos(url, output_dir):
-    """
-    دانلود ویدیوهای قابل‌استخراج از پست اینستاگرام.
-    """
 
     output_template = os.path.join(
         output_dir,
@@ -330,13 +565,11 @@ async def download_instagram_videos(url, output_dir):
     stdout, stderr = await process.communicate()
 
     stdout_text = stdout.decode(
-        "utf-8",
-        errors="ignore"
+        "utf-8", errors="ignore"
     ).strip()
 
     stderr_text = stderr.decode(
-        "utf-8",
-        errors="ignore"
+        "utf-8", errors="ignore"
     ).strip()
 
     if stdout_text:
@@ -348,11 +581,7 @@ async def download_instagram_videos(url, output_dir):
         print(stderr_text[-5000:])
 
     video_extensions = {
-        ".mp4",
-        ".mkv",
-        ".webm",
-        ".mov",
-        ".m4v",
+        ".mp4", ".mkv", ".webm", ".mov", ".m4v",
     }
 
     video_files = sorted(
@@ -389,11 +618,7 @@ async def download_instagram_videos(url, output_dir):
 
         if info_path.exists():
             try:
-                with open(
-                    info_path,
-                    "r",
-                    encoding="utf-8"
-                ) as f:
+                with open(info_path, "r", encoding="utf-8") as f:
                     info = json.load(f)
 
                 caption = (
@@ -405,10 +630,7 @@ async def download_instagram_videos(url, output_dir):
                 )
 
             except Exception as e:
-                print(
-                    "Instagram metadata error:",
-                    repr(e)
-                )
+                print("Instagram metadata error:", repr(e))
 
         videos.append((str(video_path), caption))
 
@@ -447,7 +669,8 @@ async def handle_instagram_link(message, url):
                 if original_size > MAX_FILE_SIZE:
                     failed_videos += 1
                     await message.reply_text(
-                        f"⚠️ ویدیوی {index} به دلیل حجم بیشتر از 2 گیگابایت رد شد."
+                        f"⚠️ ویدیوی {index} به دلیل حجم بیشتر از "
+                        "2 گیگابایت رد شد."
                     )
                     continue
 
@@ -457,7 +680,8 @@ async def handle_instagram_link(message, url):
                 )
 
                 await status_message.edit_text(
-                    f"⚙️ در حال فشرده‌سازی ویدیوی {index} از {total_videos}...\n"
+                    f"⚙️ در حال فشرده‌سازی ویدیوی "
+                    f"{index} از {total_videos}...\n"
                     "کیفیت خروجی: 480p"
                 )
 
@@ -479,12 +703,14 @@ async def handle_instagram_link(message, url):
                 if compressed_size > MAX_FILE_SIZE:
                     failed_videos += 1
                     await message.reply_text(
-                        f"⚠️ فایل خروجی ویدیوی {index} بیشتر از 2 گیگابایت است و ارسال نشد."
+                        f"⚠️ فایل خروجی ویدیوی {index} "
+                        "بیشتر از 2 گیگابایت است و ارسال نشد."
                     )
                     continue
 
                 await status_message.edit_text(
-                    f"📤 در حال ارسال ویدیوی {index} از {total_videos}..."
+                    f"📤 در حال ارسال ویدیوی "
+                    f"{index} از {total_videos}..."
                 )
 
                 caption_parts = []
@@ -499,7 +725,6 @@ async def handle_instagram_link(message, url):
                         str(instagram_caption).strip()
                     )
 
-                # افزودن لینک اصلی اینستاگرام به کپشن
                 caption_parts.append(
                     f"🔗 لینک اصلی اینستاگرام:\n{original_url}"
                 )
@@ -535,10 +760,8 @@ async def handle_instagram_link(message, url):
 
     except Exception as e:
         error_text = (
-            "نوع خطا: "
-            + type(e).__name__
-            + "\n\nپیام:\n"
-            + str(e)
+            "نوع خطا: " + type(e).__name__
+            + "\n\nپیام:\n" + str(e)
         )
 
         print("Instagram processing error:")
@@ -562,10 +785,7 @@ async def handle_instagram_link(message, url):
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-async def handle_text(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def handle_text(update, context):
     message = update.effective_message
 
     if not message or not message.text:
@@ -581,22 +801,29 @@ async def handle_text(
     await handle_instagram_link(message, url)
 
 
-async def start(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+# =========================================================
+# START COMMAND
+# =========================================================
+
+async def start(update, context):
     await update.effective_message.reply_text(
         "سلام 👋\n\n"
         "🎬 ویدیوی تلگرام را بفرستید؛ "
         "به‌صورت خودکار به 480p فشرده می‌شود.\n\n"
-        "📸 لینک عمومی پست یا ریل اینستاگرام "
-        "را هم بفرستید تا ویدیوهای قابل‌دریافت آن "
-        "دانلود و به 480p تبدیل شوند.\n\n"
+        "🎵 موزیک و فایل صوتی را بفرستید؛ "
+        "به MP3 با کیفیت 128kbps تبدیل می‌شود.\n\n"
+        "🎙 ویس تلگرام به Opus با کیفیت 24kbps تبدیل می‌شود.\n\n"
+        "📸 لینک عمومی پست یا ریل اینستاگرام را هم بفرستید "
+        "تا ویدیوهای قابل‌دریافت آن دانلود و به 480p تبدیل شوند.\n\n"
         "📝 کپشن و لینک اصلی اینستاگرام تا حد امکان "
         "همراه ویدیوی خروجی ارسال می‌شوند.\n\n"
         "❌ نیازی به انتخاب کیفیت نیست."
     )
 
+
+# =========================================================
+# MAIN
+# =========================================================
 
 def main():
     if not BOT_TOKEN:
@@ -640,7 +867,28 @@ def main():
     application.add_handler(
         MessageHandler(
             filters.Document.VIDEO,
-            handle_document,
+            handle_document_video,
+        )
+    )
+
+    application.add_handler(
+        MessageHandler(
+            filters.AUDIO,
+            handle_audio,
+        )
+    )
+
+    application.add_handler(
+        MessageHandler(
+            filters.VOICE,
+            handle_voice,
+        )
+    )
+
+    application.add_handler(
+        MessageHandler(
+            filters.Document.ALL,
+            handle_audio_document,
         )
     )
 
