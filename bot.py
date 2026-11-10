@@ -1,4 +1,3 @@
-
 import os
 import re
 import shutil
@@ -212,6 +211,165 @@ async def process_telegram_video(
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+# =========================================================
+# EXTRACT AUDIO FROM VIDEO
+# =========================================================
+
+async def process_video_audio(
+    message,
+    file_id,
+    file_name="video.mp4",
+    caption=None,
+):
+    temp_dir = tempfile.mkdtemp(prefix="vicoan_extract_audio_")
+    status_message = None
+
+    try:
+        safe_name = Path(file_name or "video.mp4").name
+        input_path = os.path.join(temp_dir, safe_name)
+
+        output_name = Path(safe_name).stem + "_audio.mp3"
+        output_path = os.path.join(temp_dir, output_name)
+
+        status_message = await message.reply_text(
+            "⏳ در حال استخراج صدا از ویدیو..."
+        )
+
+        telegram_file = await message.get_bot().get_file(file_id)
+        await telegram_file.download_to_drive(input_path)
+
+        original_size = os.path.getsize(input_path)
+
+        if original_size > MAX_FILE_SIZE:
+            await status_message.edit_text(
+                "❌ حجم فایل بیشتر از 2 گیگابایت است."
+            )
+            return
+
+        command = [
+            "ffmpeg",
+            "-y",
+            "-i", input_path,
+            "-map", "0:a:0",
+            "-vn",
+            "-c:a", "libmp3lame",
+            "-b:a", "128k",
+            "-ar", "44100",
+            "-ac", "2",
+            output_path,
+        ]
+
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        stdout, stderr = await process.communicate()
+
+        if process.returncode != 0 or not os.path.exists(output_path):
+            details = stderr.decode(
+                "utf-8",
+                errors="replace"
+            )
+
+            if "Stream map" in details or "matches no streams" in details:
+                raise RuntimeError(
+                    "این ویدیو صدای قابل‌استخراج ندارد."
+                )
+
+            raise RuntimeError(
+                "استخراج صدا با FFmpeg ناموفق بود:\n"
+                + details[-2500:]
+            )
+
+        final_size = os.path.getsize(output_path)
+
+        if final_size == 0:
+            raise RuntimeError("فایل صوتی خروجی خالی است.")
+
+        if final_size > MAX_FILE_SIZE:
+            await status_message.edit_text(
+                "❌ حجم فایل صوتی خروجی بیشتر از 2 گیگابایت است."
+            )
+            return
+
+        reduction = reduction_percent(original_size, final_size)
+
+        info = (
+            f"حجم ویدیوی اولیه: {format_size(original_size)}\n"
+            f"حجم فایل صوتی: {format_size(final_size)}\n"
+            f"کاهش حجم: {reduction}%"
+        )
+
+        final_caption = prepare_caption(
+            ((caption.strip() + "\n\n") if caption else "") + info
+        )
+
+        await status_message.edit_text(
+            "📤 صدا استخراج شد؛ در حال ارسال فایل MP3..."
+        )
+
+        with open(output_path, "rb") as audio_file:
+            await message.reply_audio(
+                audio=audio_file,
+                title=Path(output_name).stem,
+                caption=final_caption,
+            )
+
+        await status_message.delete()
+
+    except Exception as e:
+        print("Video audio extraction error:")
+        traceback.print_exc()
+
+        try:
+            error_text = str(e)
+
+            if status_message:
+                await status_message.edit_text(
+                    "❌ خطا در استخراج صدا:\n\n"
+                    + error_text[:3000]
+                )
+            else:
+                await message.reply_text(
+                    "❌ خطا در استخراج صدا:\n\n"
+                    + error_text[:3000]
+                )
+
+        except Exception:
+            pass
+
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+# =========================================================
+# AUDIO MODE COMMANDS
+# =========================================================
+
+async def audio_mode(update, context):
+    context.user_data["extract_next_video_audio"] = True
+
+    await update.effective_message.reply_text(
+        "🎵 حالت استخراج صدا برای ویدیوی بعدی فعال شد.\n"
+        "حالا ویدیو را بفرستید؛ فقط همین یک ویدیو به MP3 تبدیل می‌شود.\n"
+        "برای لغو، دستور /cancel_audio را بفرستید."
+    )
+
+
+async def cancel_audio_mode(update, context):
+    context.user_data["extract_next_video_audio"] = False
+
+    await update.effective_message.reply_text(
+        "لغو شد؛ حالت عادی فشرده‌سازی ویدیو فعال است."
+    )
+
+
+# =========================================================
+# VIDEO HANDLERS
+# =========================================================
+
 async def handle_video(update, context):
     message = update.effective_message
 
@@ -220,18 +378,32 @@ async def handle_video(update, context):
 
     video = message.video
 
+    extract_audio = context.user_data.pop(
+        "extract_next_video_audio",
+        False
+    )
+
     if video.file_size and video.file_size > MAX_FILE_SIZE:
         await message.reply_text(
             "❌ حجم ویدیو بیشتر از 2 گیگابایت است."
         )
         return
 
-    await process_telegram_video(
-        message=message,
-        file_id=video.file_id,
-        file_name="telegram_video.mp4",
-        caption=message.caption,
-    )
+    if extract_audio:
+        await process_video_audio(
+            message=message,
+            file_id=video.file_id,
+            file_name="telegram_video.mp4",
+            caption=message.caption,
+        )
+
+    else:
+        await process_telegram_video(
+            message=message,
+            file_id=video.file_id,
+            file_name="telegram_video.mp4",
+            caption=message.caption,
+        )
 
 
 async def handle_document_video(update, context):
@@ -242,6 +414,11 @@ async def handle_document_video(update, context):
 
     document = message.document
 
+    extract_audio = context.user_data.pop(
+        "extract_next_video_audio",
+        False
+    )
+
     if not (document.mime_type or "").startswith("video/"):
         return
 
@@ -251,12 +428,21 @@ async def handle_document_video(update, context):
         )
         return
 
-    await process_telegram_video(
-        message=message,
-        file_id=document.file_id,
-        file_name=document.file_name or "telegram_video.mp4",
-        caption=message.caption,
-    )
+    if extract_audio:
+        await process_video_audio(
+            message=message,
+            file_id=document.file_id,
+            file_name=document.file_name or "telegram_video.mp4",
+            caption=message.caption,
+        )
+
+    else:
+        await process_telegram_video(
+            message=message,
+            file_id=document.file_id,
+            file_name=document.file_name or "telegram_video.mp4",
+            caption=message.caption,
+        )
 
 
 # =========================================================
@@ -288,6 +474,7 @@ async def compress_audio_file(input_path, output_dir, is_voice=False):
             "-application", "voip",
             "-ac", "1",
         ]
+
     else:
         audio_args = [
             "-c:a", "libmp3lame",
@@ -316,7 +503,10 @@ async def compress_audio_file(input_path, output_dir, is_voice=False):
     stdout, stderr = await process.communicate()
 
     if process.returncode != 0 or not os.path.exists(compressed_path):
-        error = stderr.decode("utf-8", errors="replace")
+        error = stderr.decode(
+            "utf-8",
+            errors="replace"
+        )
 
         raise RuntimeError(
             "فشرده‌سازی صوتی با FFmpeg ناموفق بود:\n"
@@ -400,6 +590,7 @@ async def process_telegram_audio(
 
         if compressed:
             info += f"کاهش حجم: {reduction}%"
+
         else:
             info += (
                 "فایل اصلی حفظ شد؛ "
@@ -421,6 +612,7 @@ async def process_telegram_audio(
                     voice=audio_file,
                     caption=final_caption,
                 )
+
             else:
                 await message.reply_audio(
                     audio=audio_file,
@@ -446,11 +638,13 @@ async def process_telegram_audio(
                     "❌ خطای پردازش فایل صوتی:\n\n"
                     + error_text[:3000]
                 )
+
             else:
                 await message.reply_text(
                     "❌ خطای پردازش فایل صوتی:\n\n"
                     + error_text[:3000]
                 )
+
         except Exception:
             pass
 
@@ -565,11 +759,13 @@ async def download_instagram_videos(url, output_dir):
     stdout, stderr = await process.communicate()
 
     stdout_text = stdout.decode(
-        "utf-8", errors="ignore"
+        "utf-8",
+        errors="ignore"
     ).strip()
 
     stderr_text = stderr.decode(
-        "utf-8", errors="ignore"
+        "utf-8",
+        errors="ignore"
     ).strip()
 
     if stdout_text:
@@ -773,11 +969,13 @@ async def handle_instagram_link(message, url):
                     "❌ خطای پردازش اینستاگرام:\n\n"
                     + error_text[:3500]
                 )
+
             else:
                 await message.reply_text(
                     "❌ خطای پردازش اینستاگرام:\n\n"
                     + error_text[:3500]
                 )
+
         except Exception:
             pass
 
@@ -817,6 +1015,8 @@ async def start(update, context):
         "تا ویدیوهای قابل‌دریافت آن دانلود و به 480p تبدیل شوند.\n\n"
         "📝 کپشن و لینک اصلی اینستاگرام تا حد امکان "
         "همراه ویدیوی خروجی ارسال می‌شوند.\n\n"
+        "🎧 برای استخراج صدا از ویدیوی بعدی، قبل از ارسال آن /audio را بفرستید.\n"
+        "برای لغو حالت استخراج: /cancel_audio\n\n"
         "❌ نیازی به انتخاب کیفیت نیست."
     )
 
@@ -848,6 +1048,14 @@ def main():
 
     application.add_handler(
         CommandHandler("start", start)
+    )
+
+    application.add_handler(
+        CommandHandler("audio", audio_mode)
+    )
+
+    application.add_handler(
+        CommandHandler("cancel_audio", cancel_audio_mode)
     )
 
     application.add_handler(
