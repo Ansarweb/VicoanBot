@@ -252,9 +252,9 @@ async def process_video_audio(
             "-map", "0:a:0",
             "-vn",
             "-c:a", "libmp3lame",
-            "-b:a", "128k",
-            "-ar", "44100",
-            "-ac", "2",
+            "-b:a", "64k",
+            "-ar", "32000",
+            "-ac", "1",
             output_path,
         ]
 
