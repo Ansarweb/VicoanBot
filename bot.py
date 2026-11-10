@@ -210,7 +210,6 @@ async def process_telegram_video(
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
-
 # =========================================================
 # EXTRACT AUDIO FROM VIDEO
 # =========================================================
@@ -367,6 +366,231 @@ async def cancel_audio_mode(update, context):
 
 
 # =========================================================
+# ONE-TIME VIDEO CUT MODE
+# =========================================================
+
+def parse_cut_time(value):
+    match = re.fullmatch(r"(\d+):([0-5]\d)", value.strip())
+
+    if not match:
+        raise ValueError(
+            "زمان باید به شکل دقیقه:ثانیه باشد؛ مثال: 91:20"
+        )
+
+    return int(match.group(1)) * 60 + int(match.group(2))
+
+
+async def cut_mode(update, context):
+    if len(context.args) != 2:
+        await update.effective_message.reply_text(
+            "فرمت دستور درست نیست.\n"
+            "نمونه:\n/cut 91:20 93:55\n\n"
+            "زمان‌ها به شکل دقیقه:ثانیه هستند."
+        )
+        return
+
+    try:
+        start_seconds = parse_cut_time(context.args[0])
+        end_seconds = parse_cut_time(context.args[1])
+
+    except ValueError as e:
+        await update.effective_message.reply_text("❌ " + str(e))
+        return
+
+    if start_seconds >= end_seconds:
+        await update.effective_message.reply_text(
+            "❌ زمان پایان باید از زمان شروع بزرگ‌تر باشد."
+        )
+        return
+
+    context.user_data["extract_next_video_audio"] = False
+
+    context.user_data["cut_next_video"] = {
+        "start": start_seconds,
+        "end": end_seconds,
+        "start_text": context.args[0],
+        "end_text": context.args[1],
+    }
+
+    await update.effective_message.reply_text(
+        "✂️ برش برای ویدیوی بعدی فعال شد.\n"
+        f"شروع: {context.args[0]}\n"
+        f"پایان: {context.args[1]}\n\n"
+        "حالا ویدیو را بفرستید. تصویر و صدا با هم حفظ می‌شوند.\n"
+        "برای لغو: /cancel_cut"
+    )
+
+
+async def cancel_cut_mode(update, context):
+    context.user_data.pop("cut_next_video", None)
+
+    await update.effective_message.reply_text(
+        "برش ویدیو لغو شد؛ حالت عادی ربات فعال است."
+    )
+
+
+async def process_video_cut(
+    message,
+    file_id,
+    cut_settings,
+    file_name="video.mp4",
+    caption=None,
+):
+    temp_dir = tempfile.mkdtemp(prefix="vicoan_cut_")
+    status_message = None
+
+    try:
+        safe_name = Path(file_name or "video.mp4").name
+        input_path = os.path.join(temp_dir, safe_name)
+        output_path = os.path.join(temp_dir, "cut_video.mp4")
+
+        status_message = await message.reply_text(
+            "⏳ در حال دانلود و بررسی ویدیو برای برش..."
+        )
+
+        telegram_file = await message.get_bot().get_file(file_id)
+        await telegram_file.download_to_drive(input_path)
+
+        original_size = os.path.getsize(input_path)
+
+        if original_size > MAX_FILE_SIZE:
+            await status_message.edit_text(
+                "❌ حجم فایل بیشتر از 2 گیگابایت است."
+            )
+            return
+
+        probe = await asyncio.create_subprocess_exec(
+            "ffprobe",
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            input_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        probe_out, probe_err = await probe.communicate()
+
+        if probe.returncode != 0:
+            raise RuntimeError(
+                "خواندن مدت ویدیو ناموفق بود:\n"
+                + probe_err.decode(
+                    "utf-8",
+                    errors="replace"
+                )[-2000:]
+            )
+
+        try:
+            duration = float(probe_out.decode("utf-8").strip())
+
+        except (TypeError, ValueError):
+            raise RuntimeError("مدت ویدیو قابل تشخیص نیست.")
+
+        start_seconds = cut_settings["start"]
+        end_seconds = cut_settings["end"]
+
+        if end_seconds > duration:
+            raise ValueError(
+                f"زمان پایان انتخابی ({cut_settings['end_text']}) "
+                f"از مدت ویدیو ({duration / 60:.2f} دقیقه) بیشتر است."
+            )
+
+        await status_message.edit_text(
+            "✂️ در حال برش دقیق ویدیو؛ تصویر و صدا با هم حفظ می‌شوند..."
+        )
+
+        command = [
+            "ffmpeg",
+            "-y",
+            "-i", input_path,
+            "-ss", str(start_seconds),
+            "-t", str(end_seconds - start_seconds),
+            "-map", "0:v:0",
+            "-map", "0:a?",
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-crf", "18",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+            output_path,
+        ]
+
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        stdout, stderr = await process.communicate()
+
+        if process.returncode != 0 or not os.path.exists(output_path):
+            raise RuntimeError(
+                "FFmpeg نتوانست ویدیو را برش دهد:\n"
+                + stderr.decode(
+                    "utf-8",
+                    errors="replace"
+                )[-3000:]
+            )
+
+        final_size = os.path.getsize(output_path)
+
+        if final_size == 0:
+            raise RuntimeError("فایل برش‌خورده خالی است.")
+
+        if final_size > MAX_FILE_SIZE:
+            await status_message.edit_text(
+                "❌ حجم فایل خروجی بیشتر از 2 گیگابایت است."
+            )
+            return
+
+        cut_caption = (
+            ((caption.strip() + "\n\n") if caption else "")
+            + f"✂️ بخش انتخاب‌شده: {cut_settings['start_text']} تا "
+              f"{cut_settings['end_text']}"
+        )
+
+        cut_caption = prepare_caption(cut_caption)
+
+        await status_message.edit_text(
+            "📤 برش انجام شد؛ در حال ارسال ویدیو..."
+        )
+
+        with open(output_path, "rb") as video_file:
+            await message.reply_video(
+                video=video_file,
+                caption=cut_caption,
+                supports_streaming=True,
+            )
+
+        await status_message.delete()
+
+    except Exception as e:
+        print("Video cut processing error:")
+        traceback.print_exc()
+
+        try:
+            error_text = str(e)
+
+            if status_message:
+                await status_message.edit_text(
+                    "❌ خطا در برش ویدیو:\n\n"
+                    + error_text[:3000]
+                )
+            else:
+                await message.reply_text(
+                    "❌ خطا در برش ویدیو:\n\n"
+                    + error_text[:3000]
+                )
+
+        except Exception:
+            pass
+
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+# =========================================================
 # VIDEO HANDLERS
 # =========================================================
 
@@ -377,6 +601,8 @@ async def handle_video(update, context):
         return
 
     video = message.video
+
+    cut_settings = context.user_data.pop("cut_next_video", None)
 
     extract_audio = context.user_data.pop(
         "extract_next_video_audio",
@@ -389,7 +615,16 @@ async def handle_video(update, context):
         )
         return
 
-    if extract_audio:
+    if cut_settings:
+        await process_video_cut(
+            message=message,
+            file_id=video.file_id,
+            cut_settings=cut_settings,
+            file_name="telegram_video.mp4",
+            caption=message.caption,
+        )
+
+    elif extract_audio:
         await process_video_audio(
             message=message,
             file_id=video.file_id,
@@ -414,6 +649,8 @@ async def handle_document_video(update, context):
 
     document = message.document
 
+    cut_settings = context.user_data.pop("cut_next_video", None)
+
     extract_audio = context.user_data.pop(
         "extract_next_video_audio",
         False
@@ -428,7 +665,16 @@ async def handle_document_video(update, context):
         )
         return
 
-    if extract_audio:
+    if cut_settings:
+        await process_video_cut(
+            message=message,
+            file_id=document.file_id,
+            cut_settings=cut_settings,
+            file_name=document.file_name or "telegram_video.mp4",
+            caption=message.caption,
+        )
+
+    elif extract_audio:
         await process_video_audio(
             message=message,
             file_id=document.file_id,
@@ -718,8 +964,7 @@ async def handle_audio_document(update, context):
         file_name=file_name,
         is_voice=False,
         caption=message.caption,
-    )
-
+        )
 
 # =========================================================
 # INSTAGRAM DOWNLOADER
@@ -1017,6 +1262,10 @@ async def start(update, context):
         "همراه ویدیوی خروجی ارسال می‌شوند.\n\n"
         "🎧 برای استخراج صدا از ویدیوی بعدی، قبل از ارسال آن /audio را بفرستید.\n"
         "برای لغو حالت استخراج: /cancel_audio\n\n"
+        "✂️ برای برش یک بخش از ویدیو، قبل از ارسال آن دستور بدهید:\n"
+        "/cut 91:20 93:55\n"
+        "زمان‌ها به شکل دقیقه:ثانیه هستند. فقط ویدیوی بعدی برش می‌خورد.\n"
+        "برای لغو برش: /cancel_cut\n\n"
         "❌ نیازی به انتخاب کیفیت نیست."
     )
 
@@ -1056,6 +1305,14 @@ def main():
 
     application.add_handler(
         CommandHandler("cancel_audio", cancel_audio_mode)
+    )
+
+    application.add_handler(
+        CommandHandler("cut", cut_mode)
+    )
+
+    application.add_handler(
+        CommandHandler("cancel_cut", cancel_cut_mode)
     )
 
     application.add_handler(
